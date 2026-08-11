@@ -1,0 +1,13 @@
+include README.md
+include LICENSE
+include pyproject.toml
+include setup.py
+recursive-include skills *
+recursive-include templates *
+recursive-include hooks *
+recursive-include scripts *
+recursive-include docs *
+recursive-include opencode *
+recursive-include bmad-loop *
+recursive-include setup *
+recursive-include tests *

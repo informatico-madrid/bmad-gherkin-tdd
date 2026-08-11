@@ -14,6 +14,14 @@ bmad-loop. Setup does two jobs — (1) register module config + help entries (us
 same merge scripts the official BMAD installer uses), and (2) install the module skills
 into the project's skill tree and wire the `bmad-dev-auto` handoff to the coordinator.
 
+> **Recommended path:** prefer the CLI over this manual skill when a Python runtime is
+> available. After `pip install bmad-gherkin-tdd` (or `uv tool install .` from a
+> checkout), run `bmad-gherkin-tdd install --project {project-root}`. It performs the
+> same install declaratively and idempotently (skills, resolver, docs, hook, opencode
+> assets, bmad-loop profiles, override templates, config.yaml and module-help.csv
+> registration), and supports `upgrade`, `uninstall` and `status`. This manual skill
+> remains the fallback for non-Python or agent-only environments.
+
 The same skill handles both first-time setup and **upgrades**. A plain re-run on an
 already-installed project is treated as an upgrade.
 

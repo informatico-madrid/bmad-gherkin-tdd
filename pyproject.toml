@@ -1,14 +1,46 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "bmad-gherkin-tdd"
 version = "0.1.0"
-requires-python = ">=3.11"
 description = "Contract-first TDD development methodology module for BMAD projects"
 readme = "README.md"
+requires-python = ">=3.11"
 license = {text = "MIT"}
+keywords = ["bmad", "tdd", "gherkin", "contract-first", "mutation-testing", "agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Testing :: BDD",
+]
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/bmad-gherkin-tdd"
+Repository = "https://github.com/your-org/bmad-gherkin-tdd"
+Issues = "https://github.com/your-org/bmad-gherkin-tdd/issues"
+Documentation = "https://github.com/your-org/bmad-gherkin-tdd#readme"
+
+[project.scripts]
+bmad-gherkin-tdd = "bmad_gherkin_tdd.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["bmad_gherkin_tdd*"]
@@ -16,3 +48,12 @@ include = ["bmad_gherkin_tdd*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["."]
