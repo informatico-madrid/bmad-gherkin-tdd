@@ -47,7 +47,9 @@ def project(tmp_path: Path) -> Path:
         custom / "bmad-tdd-coordinator.toml",
     )
     # The resolver.
-    shutil.copy2(MODULE_ROOT / "scripts" / "resolve_customization.py", scripts / "resolve_customization.py")
+    shutil.copy2(
+        MODULE_ROOT / "scripts" / "resolve_customization.py", scripts / "resolve_customization.py"
+    )
 
     # Layer-3 skill defaults for bmad-dev-auto (upstream shape: empty workflow
     # so the override layer is the only source of the handoff).
@@ -55,7 +57,7 @@ def project(tmp_path: Path) -> Path:
     dev_auto_skill.mkdir(parents=True, exist_ok=True)
     (dev_auto_skill / "customize.toml").write_text(
         "[workflow]\nactivation_steps_prepend = []\n"
-        "activation_steps_append = []\npersistent_facts = []\non_complete = \"\"\n",
+        'activation_steps_append = []\npersistent_facts = []\non_complete = ""\n',
         encoding="utf-8",
     )
 
@@ -79,8 +81,12 @@ def project(tmp_path: Path) -> Path:
 
 
 def _resolve(project: Path, skill_dir: Path, key: str | None = None) -> dict:
-    args = [sys.executable, str(project / "_bmad" / "scripts" / "resolve_customization.py"),
-            "-s", str(skill_dir)]
+    args = [
+        sys.executable,
+        str(project / "_bmad" / "scripts" / "resolve_customization.py"),
+        "-s",
+        str(skill_dir),
+    ]
     if key:
         args += ["-k", key]
     result = subprocess.run(
@@ -97,7 +103,9 @@ def _resolve(project: Path, skill_dir: Path, key: str | None = None) -> dict:
 
 
 def _resolved_handoff(project: Path) -> str:
-    data = _resolve(project, project / "skills" / "bmad-dev-auto", "workflow.implementation_handoff")
+    data = _resolve(
+        project, project / "skills" / "bmad-dev-auto", "workflow.implementation_handoff"
+    )
     assert "workflow.implementation_handoff" in data, list(data.keys())
     return data["workflow.implementation_handoff"]
 
@@ -173,8 +181,13 @@ def test_handoff_returns_to_outer_workflow_in_order(project: Path) -> None:
 def test_on_complete_requires_completion_contract_clauses(project: Path) -> None:
     """on_complete must run the WORKFLOW_COMPLETION_CONTRACT."""
     on_complete = _resolved_workflow(project)["workflow"]["on_complete"]
-    required = ["WORKFLOW_COMPLETION_CONTRACT", "status: done", "Auto Run Result",
-                "bmad-dev-auto-result-", "{implementation_artifacts}"]
+    required = [
+        "WORKFLOW_COMPLETION_CONTRACT",
+        "status: done",
+        "Auto Run Result",
+        "bmad-dev-auto-result-",
+        "{implementation_artifacts}",
+    ]
     missing = [c for c in required if c not in on_complete]
     assert missing == [], (
         f"workflow.on_complete missing required clause(s): {missing}\n{on_complete!r}"
@@ -193,6 +206,5 @@ def test_coordinator_frontier_present_in_resolved_workflow(project: Path) -> Non
     ]
     missing = [c for c in required if c not in resolved_text]
     assert missing == [], (
-        f"Resolved bmad-tdd-coordinator workflow missing clause(s): "
-        f"{missing}\n{resolved_text}"
+        f"Resolved bmad-tdd-coordinator workflow missing clause(s): {missing}\n{resolved_text}"
     )
