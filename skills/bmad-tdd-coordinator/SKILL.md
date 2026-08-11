@@ -54,12 +54,19 @@ GHERKIN_GATE (contrato autónomo — ejecutar ANTES de INTAKE):
   la creación y aprobación del contrato Gherkin (el modo loop es 100% autónomo,
   el humano puede estar ausente/durmiendo).
 
-  Procedimiento:
-  1. Verificar si `{project-root}/{contracts_dir}/<story-key>.feature` existe y
-     tiene `# Status: APPROVED` en cabecera.
-     - Si existe y está APPROVED → logear "GHERKIN_GATE: contract already approved"
-       → pasar a INTAKE.
-  2. Si NO existe o está en DRAFT → GENERAR/completar el contrato:
+  Modos de firma (ver gherkin-author → Signature modes):
+    - loop_auto (BMAD_LOOP_MODE=1): el coordinator genera + auto-aprueba con
+      `Approved-by: coordinator-auto`. NUNCA preguntar al humano.
+    - human_required (sin BMAD_LOOP_MODE): si el contrato no existe o está DRAFT,
+      HALT y pedir /gherkin-author para la firma humana. NUNCA auto-aprobar fuera
+      de loop mode.
+
+  Procedimiento (loop_auto):
+   1. Verificar si `{project-root}/{contracts_dir}/<story-key>.feature` existe y
+      tiene `# Status: APPROVED` en cabecera.
+      - Si existe y está APPROVED → logear "GHERKIN_GATE: contract already approved"
+        → pasar a INTAKE.
+   2. Si NO existe o está en DRAFT → GENERAR/completar el contrato:
      a. Leer la story file completa: Story, Acceptance Criteria, Tasks, scope
         boundaries (do-NOT-implement), Dev Notes.
      b. Leer `{module-root}/docs/contract-rules.md` — reglas del .feature, non-negotiable.
@@ -228,7 +235,8 @@ es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
       ```
       Solo invocar si `git diff <implementing_commit>..HEAD -- <function_file>` devuelve cambios.
 
-RELEASE (gates de salida — ejecutar DESPUÉS del último @s, ANTES de marcar review/done):
+RELEASE (gates de salida — ejecutar DESPUÉS del último @s; el coordinator es
+  implementation-only y NO cierra la story):
 
   RELEASE SCOPE (determinar ANTES de ejecutar cualquier gate):
     - Los gates aplicables se declaran en la configuración del proyecto
@@ -239,23 +247,27 @@ RELEASE (gates de salida — ejecutar DESPUÉS del último @s, ANTES de marcar r
   Gates (los comandos exactos salen de la configuración del proyecto; los siguientes son
   los que el módulo define por defecto — un proyecto los sobreescribe en su override layer):
   - Mutation Gate: `{workflow.mutation_cmd}` (default `make mutation-check`) — SOLO coordinador,
-    NUNCA delegar a subagentes. MSI >= {workflow.msi_minimum} (default 85). Los mutantes
+    NUNCA delegar el veredicto a subagentes. MSI >= {workflow.msi_minimum} (default 85). Los mutantes
     sobrevivientes deben estar documentados en el mutant-register. PROHIBIDO añadir
     `# pragma: no mutate` — usar registro de mutantes.
   - Test Gate: `{workflow.test_cmd}` (default `uv run pytest`) — toda la suite pasa.
   - Release gates adicionales del proyecto (anti-fixture, puerto real, sonda de capacidad)
     se ejecutan si están declarados en el override layer del proyecto.
-  - edit: sprint-status.yaml (edición quirúrgica — si existe el fichero)
-  - **Cierre del spec (contrato bmad-loop):** cuando TODOS los gates de RELEASE pasen,
-    actualiza el frontmatter del story file (`{implementation_artifacts}/<story-key>.md`)
-    a `status: done` (YAML frontmatter) o `Status: done` (markdown heading) según el
-    formato que el proyecto use, y registra `Status: done` en la sección
-    `## Auto Run Result`. El `WORKFLOW_COMPLETION_CONTRACT` del bmad-dev-auto override
-    exige `status: done` para que el attempt de dev se considere completado en modo
-    automatizado (bmad-loop). NO cierres en `review` — el paso de review lo ejecuta
-    el engine después del attempt dev (adapter.review); el coordinator es
-    implementation-only y termina su attempt en `done`.
-  - Report: resultado al usuario con las salidas pegadas (demostrar, no afirmar)
+  - **Cierre = el flujo exterior (contrato bmad-loop):** el coordinator NO marca
+    `status: done`, NO escribe `## Auto Run Result`, NO crea el completion marker
+    `bmad-dev-auto-result-*` y NO edita sprint-status.yaml. Son responsabilidades
+    del flujo exterior y del engine:
+      * `bmad-dev-auto` (flujo genérico) ejecuta Verify y el step-04 Review, que
+        escribe `## Auto Run Result`, fija `followup_review_recommended`, pone
+        `status: done`, commitea y crea el marker (su `WORKFLOW_COMPLETION_CONTRACT`).
+      * El engine de bmad-loop es single-writer de sprint-status.yaml
+        (`_post_dev_state_sync`): avanza la story a `done` cuando el spec alcanza
+        su estado de éxito. El coordinator no debe tocarlo.
+    Si el coordinator editara esos artefactos, robaría el cierre al flujo exterior
+    y el review de bmad-dev-auto (step-04) nunca correría.
+  - Report: el coordinator reporta EVIDENCIA (salidas de los gates pegadas,
+    demostrar, no afirmar) y DEVUELVE el control al flujo exterior (bmad-dev-auto);
+    no termina el attempt. Después del report, el flujo exterior continúa Verify → Review.
 
 Post-compactación / reanudación: ANTES de tocar código, releer
 `{project-root}/{contracts_dir}/<story-key>.feature` + el spec de la story
@@ -264,13 +276,16 @@ solo el archivo persiste.
 
 ## State Machine
 
-GHERKIN_GATE -> INTAKE -> PLAN -> CLASSIFY -> IMPLEMENT_LOOP -> INTEGRATE -> RELEASE -> DONE
+GHERKIN_GATE -> INTAKE -> PLAN -> CLASSIFY -> IMPLEMENT_LOOP -> INTEGRATE -> RELEASE -> [return to bmad-dev-auto: Verify -> Review -> DONE]
                 |
                 |--- GHERKIN_GATE: generate + review + auto-approve contract if missing (coordinator-auto)
                 |--- For each @s: classify as development | verification_preexisting | ambiguous
                 |--- development: RED -> GREEN -> CLEAN -> REFACTOR
                 |--- verification_preexisting: GREEN (confirm) -> CLEAN -> REFACTOR (if modified)
                 |--- ambiguous: STOP + report evidence gap
+                |--- RELEASE: gates verdes + reporte de evidencia; el coordinator termina
+                    su attempt aquí y devuelve el control. DONE lo cierra bmad-dev-auto
+                    (step-04) y el engine (sprint-status).
 
 ## Gates
 
@@ -334,7 +349,7 @@ Decisión del coordinador:
   - FAIL en C4–C10 → REJECT: documentar gap en deferred-work, NO pasar a REFACTOR
     (es mejor complejidad conocida y documentada que cascarón con 100% MSI falso)
 
-RELEASE (todos deben pasar para marcar review/done):
+RELEASE (todos deben pasar para que el flujo exterior cierre la story):
 4. Mutation Gate: comando de mutación del proyecto debe alcanzar >= {workflow.msi_minimum} MSI
    (configurable via {workflow.msi_minimum}, default 85) con 100% coverage. Los mutantes
    sobrevivientes deben estar documentados en mutant-register.md.
@@ -344,16 +359,23 @@ RELEASE (todos deben pasar para marcar review/done):
 7. Un AC de ejecución en vivo cerrado con SKIPPED/XFAIL es ROJO — la story se marca blocked.
 
 > Los gates son la diferencia entre "los tests del stub pasan" (cascarón) y "el producto
-> hace algo real". NO marques done sin los gates verdes.
+> hace algo real". El coordinator NO marca `done` por sí mismo: los gates verdes son la
+> condición necesaria para que el flujo exterior (bmad-dev-auto step-04) cierre la story.
 
 ## Constraints
 
-- NUNCA delegar mutmut a subagentes
+- NUNCA delegar el MUTATION GATE de RELEASE a subagentes — el veredicto final MSI lo
+  ejecuta el coordinador directamente. El subagente tdd-refactor-ornith SÍ ejecuta el
+  comando de mutación durante la fase REFACTOR para matar mutantes (refinar tests /
+  refactor a prueba); eso es el trabajo de matar mutantes, no el gate. El gate es solo
+  del coordinador y decide el cierre.
 - NUNCA skip phases in development scenarios (RED->GREEN->CLEAN->REFACTOR is mandatory)
   - Exception: verification_preexisting classification permits skipping RED only when ALL 5
     CLASSIFY conditions are satisfied AND evidence is documented in bitácora
   - CLEAN nunca se salta — es el gate estructural antes de mutation
   - ambiguous classification requires STOP — never invent RED, never skip phases
+  - A RED that PASSES instead of failing is a protocol violation → STOP, no inventes un
+    RED ni sigas; el gate mecánico lo bloquea con RED_VIOLATION.
 - ALWAYS preserve protocol fidelity
 - BITACORA OBLIGATORIA en cada @s (ROJO/VERDE/CLEAN/REFACTOR status; for verification_preexisting:
   document WHY classification was accepted — all 5 evidence points: commit hash, bitácora path:line,
@@ -369,5 +391,5 @@ RELEASE (todos deben pasar para marcar review/done):
 ## Output
 
 - Bitacora TDD actualizada en story file
-- sprint-status.yaml actualizado (si existe)
-- Reporte final al usuario con resultados de cada @s
+- Reporte de EVIDENCIA al flujo exterior (bmad-dev-auto): resultados de cada @s y salidas de los gates pegadas
+- El cierre (Auto Run Result, status: done, marker, sprint-status.yaml) lo hace el flujo exterior / el engine

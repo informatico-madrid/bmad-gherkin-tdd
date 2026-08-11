@@ -66,17 +66,21 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
       )
       ```
       → limpiar código + matar mutantes
-4. **RELEASE** (antes de done): mutation + test + gates adicionales del proyecto
-   (los comandos exactos salen del override layer del proyecto)
-   Cierre del spec: cuando TODOS los gates pasen, actualiza el story file a `status: done`
-   (frontmatter) y registra `Status: done` en `## Auto Run Result`. NO cierres en `review` —
-   el attempt dev debe terminar en `done` para que bmad-loop lo considere completado.
-5. **Actualizar sprint-status.yaml** (si existe, edición quirúrgica)
-6. **Reportar resultados** con las salidas de los gates pegadas (demostrar, no afirmar)
+4. **RELEASE** (gates de salida): mutation + test + gates adicionales del proyecto
+   (los comandos exactos salen del override layer del proyecto).
+   El coordinator es implementation-only: NO marca `status: done`, NO escribe
+   `## Auto Run Result`, NO crea el completion marker `bmad-dev-auto-result-*`
+   y NO edita sprint-status.yaml (el engine es single-writer). El cierre lo hace
+   el flujo exterior: bmad-dev-auto ejecuta Verify y step-04 Review (Auto Run Result,
+   followup_review_recommended, status: done, commit, marker).
+5. **Reportar** al flujo exterior con las salidas de los gates pegadas (demostrar, no afirmar)
+   y devolver el control a bmad-dev-auto (Verify → Review). No termines el attempt.
+6. **Actualizar sprint-status.yaml**: NO — lo gestiona el engine (`_post_dev_state_sync`).
 
 ## Reglas Críticas
 
-- NUNCA delegar mutmut a subagentes
+- NUNCA delegar el MUTATION GATE de RELEASE a subagentes — el veredicto final MSI lo
+  ejecuta el coordinador. El subagente REFACTOR sí ejecuta la mutación para matar mutantes.
 - NUNCA skip phases (RED→GREEN→CLEAN→REFACTOR es obligatorio)
 - NUNCA marcar review/done sin los gates de RELEASE verdes
 - SKIPPED no es GREEN: un AC de ejecución en vivo cerrado con SKIPPED es ROJO -> story `blocked`
@@ -103,14 +107,18 @@ RELEASE:
   1. Mutation Gate: {workflow.mutation_cmd} — MSI >= {workflow.msi_minimum}, coverage 100%
   2. Test Gate: {workflow.test_cmd} — toda la suite pasa
   3. Gates adicionales del proyecto (declarados en el override layer) — solo los aplicables
-  4. edit: sprint-status.yaml (si existe)
-  5. Reportar al usuario con salidas pegadas
+  4. NO edites sprint-status.yaml (single-writer: el engine) ni cierres el spec
+     (status: done / Auto Run Result / marker → flujo exterior bmad-dev-auto)
+  5. Reportar al flujo exterior con salidas pegadas y devolver el control
 ```
 
 ## Error Handling
 
-- Si el contrato no está APPROVED: HALT, pedir /gherkin-author
-- Si un test no falla en RED: STOP y reportar
+- Si el contrato no está APPROVED:
+  - loop_auto (BMAD_LOOP_MODE=1): GHERKIN_GATE genera + auto-aprueba
+    (`Approved-by: coordinator-auto`) — no preguntar al humano.
+  - human_required (sin loop): HALT y pedir /gherkin-author (firma humana, nunca auto-aprobar).
+- Si un test no falla en RED: STOP y reportar (el gate mecánico lo marca RED_VIOLATION en loop)
 - Si un test no pasa en GREEN: STOP y reportar
 - Si mutmut falla: STOP y reportar survived mutants
 - Si un gate determinado N/A por RELEASE SCOPE: registrar "N/A — skipped" y continuar. NUNCA escalar.

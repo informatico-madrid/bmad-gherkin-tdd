@@ -48,5 +48,9 @@ WORKFLOW_COMPLETION_CONTRACT: before ending the outer run, verify the spec front
 declares `status: done` and the `## Auto Run Result` section reports Status: done; then
 create and verify the bmad-dev-auto-result- marker file at the EXACT path injected by the
 engine under {implementation_artifacts} — use that injected path verbatim, never invent a
-task id or path.
+task id or path. Do NOT edit sprint-status.yaml — the bmad-loop engine is the single-writer
+(_post_dev_state_sync advances the story to done once the spec reaches its success status).
+The TDD coordinator (implementation-only) must NOT write status: done, Auto Run Result,
+the marker, or sprint-status.yaml; if you observe it doing so, that is a coordinator
+contract violation — report it and rely on step-04 for the closure.
 """

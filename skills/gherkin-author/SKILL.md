@@ -74,6 +74,21 @@ NEVER write production code, test code, or story-file edits. Your only output:
    Never self-approve. A lukewarm "ok, sigue" is not approval — ask explicitly.
 5. Remind the human: `bmad-tdd-coordinator` HALTs without `# Status: APPROVED`.
 
+## Signature modes
+
+Two explicit modes — never mix them:
+
+- **Interactive (human_required, default).** This is the process above: the
+  contract is walked through human signature and never self-approved. Applies
+  whenever a human is present (interactive BMAD flow).
+- **Autonomous loop (loop_auto).** When bmad-loop drives a story end-to-end with
+  no human present (`BMAD_LOOP_MODE=1`), the `bmad-tdd-coordinator`'s
+  GHERKIN_GATE generates the contract from the ACs, auto-reviews it and stamps
+  `# Status: APPROVED` + `# Approved-by: coordinator-auto`. In loop_auto the
+  human-signature steps above are intentionally bypassed — the loop is
+  100% autonomous by design. `gherkin-author` is still used interactively when a
+  human is available; the coordinator never auto-approves outside loop mode.
+
 ## Authoring for the local implementer
 
 The `.feature` you sign is implemented by a local model (not necessarily a

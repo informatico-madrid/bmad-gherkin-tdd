@@ -1,10 +1,13 @@
 # --- bmad-loop adapter profile: opencode-http (dev) ---
-# Direct TDD coordinator routing for initial and repair flows.
-# Skills live in the local .agents/skills tree; hooks dialect is none.
+# Routes the unattended dev primitive through bmad-dev-auto, which drives the
+# TDD coordinator (bmad-gherkin-tdd module) via its implementation_handoff and
+# then runs the outer Verify → Review → closure (Auto Run Result, status: done,
+# completion marker). NEVER route dev directly to the coordinator: the review
+# step lives in bmad-dev-auto, not in the coordinator.
 #
 name = "opencode-http"
 binary = "opencode"
-prompt_template = "Use the bmad-tdd-coordinator skill now: dev this story {args}"
+prompt_template = "Run the bmad-dev-auto skill on this story now: /bmad-dev-auto {args}"
 usage_parser = "none"
 skill_tree = ".agents/skills"
 first_run_note = "run opencode auth login once on this machine; headless servers reuse stored credentials"
