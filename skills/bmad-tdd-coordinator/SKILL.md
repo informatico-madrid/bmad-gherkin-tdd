@@ -141,6 +141,9 @@ For each @s in story (derivado del escenario @s del contrato firmado), AFTER CLA
 **IMPORTANTE — Mecanismo de invocación:** Las fases TDD se ejecutan como SUBAGENTES.
 El coordinador NUNCA escribe tests ni código directamente. Usar SIEMPRE la herramienta
 `task()` con `subagent_type` correspondiente. No usar `skill()` para las fases.
+La directiva canónica de dispatch es `invoke task: <agent>` — la secuencia prescrita
+es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
+`invoke task: tdd-clean-ornith` → `invoke task: tdd-refactor-ornith`.
 
   - If classification = development:
       ```

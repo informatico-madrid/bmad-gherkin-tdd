@@ -27,10 +27,9 @@ tdd-red / tdd-green / tdd-clean / tdd-refactor skills.
 Direct prod/test edits by bmad-dev-auto are forbidden; inability to invoke coordinator -> HALT blocked.
 On return report files changed, bitacora phases, exact verification outcomes, unfinished work, residual risks.
 Propagate coordinator HALT as blocked.
-The coordinator is implementation-only and returns evidence: after its report, return to
-bmad-dev-auto, resume bmad-dev-auto step-03 Implement at Verify, then read and follow
-./step-04-review.md; do not end the outer turn — the outer workflow continues Verify ->
-Review and owns completion.
+The coordinator is implementation-only and returns evidence: after its report, return to bmad-dev-auto,
+resume bmad-dev-auto step-03 Implement at Verify, then read and follow ./step-04-review.md;
+do not end the outer turn — the outer workflow continues Verify -> Review and owns completion.
 """
 activation_steps_append = [
   "PILOT GATE: accept only a spec that names exactly one signed Gherkin @s, one integration boundary, at most one live dependency, one verification command with expected output, one final observable, and a closed allowed-file list. Otherwise HALT blocked before implementation.",

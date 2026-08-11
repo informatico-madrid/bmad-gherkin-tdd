@@ -1,0 +1,20 @@
+# Team override template for bmad-tdd-coordinator — the exact TDD coordination
+# routine that routes each @s through the phase subagents (bmad-gherkin-tdd module).
+#
+# Copy into {project-root}/_bmad/custom/bmad-tdd-coordinator.toml and merge with
+# any existing project overrides (preserve the project's own mission/paths/facts).
+
+[workflow]
+activation_steps_prepend = [
+  "INTAKE · PUERTA GHERKIN (verificación post-GHERKIN_GATE, ANTES de PLAN): `head -5 {contracts_dir}/<story-key>.feature` — exige `# Status: APPROVED` + `# Approved-by:`. Si falta o no es APPROVED, HALT como fallo interno (el GHERKIN_GATE autónomo debió generar/aprobar el contrato — modo loop es 100% autónomo). El .feature aprobado (sus escenarios @s) es el INPUT CANÓNICO que pasas a cada fase RED — el texto del escenario, no una paráfrasis del story file.",
+  "INTAKE · VERIFICACIÓN-EN-CONSUMO (gate duro, ANTES de PLAN): si la story consume una capacidad de otra story ya `done`, NO confíes en el status — ejecuta la verificación que la capacidad declare en su spec. Si la capacidad consumida no responde, la dependencia NO es real -> HALT y reporta.",
+]
+activation_steps_append = [
+  "RUTINA DE COORDINACIÓN TDD: Para CADA @s en development classification, invoca EXACTAMENTE esta secuencia sincrónica (NUNCA skill directa, NUNCA inline): (1) invoke task: tdd-red-ornith con payload {story_file, @s, scenario_text, prior_evidence} → pytest FAIL → ROJO bitácora → CODING. (2) invoke task: tdd-green-ornith con mismo payload → pytest PASS → VERDE bitácora → CLEAN. (3) invoke task: tdd-clean-ornith → cleaner-gate + coverage → CLEAN bitácora → REFACTOR. (3b) VALIDAR CLEAN: aplicar checks C1-C10 del CLEAN Gate (ver SKILL.md). Si FAIL → reintentar CLEAN (max 1 vez) o deferred-work. (4) invoke task: tdd-refactor-ornith → mutmut + registro de mutantes → REFACTOR bitácora cierra ciclo. verification_preexisting: skip task red, invocar directamente task green-ornith → task clean-ornith → task refactor-ornith si aplica. HALT si algún task falla.",
+  "RE-ANCLAJE: ANTES de cada transición (INTAKE→CLASSIFY, dispatch de cada task red/green/clean/refactor, y RELEASE) relee {contracts_dir}/<story-key>.feature (el @s bajo trabajo) + el spec de la story ({implementation_artifacts}/<story-key>.md). La compactación destruye la intención; solo el archivo persiste.",
+]
+persistent_facts = [
+  "file:{module-root}/docs/contract-rules.md",
+  "TDD SUBAGENT TYPES: task(subagent_type='tdd-red-ornith'|'tdd-green-ornith'|'tdd-refactor-ornith'|'tdd-clean-ornith') — NEVER 'general' for TDD phases (general lacks task() tool).",
+]
+on_complete = ""

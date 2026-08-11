@@ -82,8 +82,11 @@ skills/                          # the six methodology skills (gherkin-author, c
 setup/                           # official BMAD installer surface (module.yaml, merge scripts, setup skill)
 hooks/tdd_cycle_gate.py          # mechanical RED/GREEN/REFACTOR timing gate (env-parameterized)
 scripts/resolve_customization.py # 3-layer TOML customization resolver
-templates/custom/bmad-dev-auto.toml   # routes bmad-dev-auto through the coordinator
+templates/custom/bmad-dev-auto.toml        # routes bmad-dev-auto through the coordinator
+templates/custom/bmad-tdd-coordinator.toml # the TDD coordination routine + release gates
 bmad-loop/profiles/*.toml        # bmad-loop adapter profiles (dev → coordinator)
 opencode/agents/opencode.json.template  # tdd-*-ornith subagent definitions
+opencode/plugins/tdd-cycle-gate.js      # opencode tool-mapping + gate relay
 docs/contract-rules.md           # binding Gherkin contract rules
+tests/                           # regression tests for the gate, resolver, coordinator consistency
 ```
