@@ -68,6 +68,9 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
       → limpiar código + matar mutantes
 4. **RELEASE** (antes de done): mutation + test + gates adicionales del proyecto
    (los comandos exactos salen del override layer del proyecto)
+   Cierre del spec: cuando TODOS los gates pasen, actualiza el story file a `status: done`
+   (frontmatter) y registra `Status: done` en `## Auto Run Result`. NO cierres en `review` —
+   el attempt dev debe terminar en `done` para que bmad-loop lo considere completado.
 5. **Actualizar sprint-status.yaml** (si existe, edición quirúrgica)
 6. **Reportar resultados** con las salidas de los gates pegadas (demostrar, no afirmar)
 

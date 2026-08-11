@@ -246,6 +246,15 @@ RELEASE (gates de salida — ejecutar DESPUÉS del último @s, ANTES de marcar r
   - Release gates adicionales del proyecto (anti-fixture, puerto real, sonda de capacidad)
     se ejecutan si están declarados en el override layer del proyecto.
   - edit: sprint-status.yaml (edición quirúrgica — si existe el fichero)
+  - **Cierre del spec (contrato bmad-loop):** cuando TODOS los gates de RELEASE pasen,
+    actualiza el frontmatter del story file (`{implementation_artifacts}/<story-key>.md`)
+    a `status: done` (YAML frontmatter) o `Status: done` (markdown heading) según el
+    formato que el proyecto use, y registra `Status: done` en la sección
+    `## Auto Run Result`. El `WORKFLOW_COMPLETION_CONTRACT` del bmad-dev-auto override
+    exige `status: done` para que el attempt de dev se considere completado en modo
+    automatizado (bmad-loop). NO cierres en `review` — el paso de review lo ejecuta
+    el engine después del attempt dev (adapter.review); el coordinator es
+    implementation-only y termina su attempt en `done`.
   - Report: resultado al usuario con las salidas pegadas (demostrar, no afirmar)
 
 Post-compactación / reanudación: ANTES de tocar código, releer
