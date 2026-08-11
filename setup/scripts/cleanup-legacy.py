@@ -129,12 +129,10 @@ def is_config_bearing(path: Path) -> bool:
     if path.name in ("_config", "core"):
         return True
     for item in path.rglob("*"):
-        if item.is_dir() and item.name == "_config":
-            if not _inside_skill_payload(item, path):
-                return True
-        elif item.is_file() and _is_config_marker(item):
-            if not _inside_skill_payload(item, path):
-                return True
+        if (
+            item.is_dir() and item.name == "_config" or item.is_file() and _is_config_marker(item)
+        ) and not _inside_skill_payload(item, path):
+            return True
     return False
 
 

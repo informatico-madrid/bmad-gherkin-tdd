@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install project + dev extras
+        run: uv venv --python ${{ matrix.python-version }} && uv pip install -e ".[dev]"
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Tests
+        run: uv run pytest
+
+      - name: Build (verifies the wheel stages the payload)
+        run: uv build
+
+      - name: Inspect wheel payload
+        run: |
+          uv run python - <<'EOF'
+          import glob, zipfile
+          wheels = glob.glob("dist/*.whl")
+          assert wheels, "no wheel produced"
+          with zipfile.ZipFile(wheels[0]) as z:
+              payload = [n for n in z.namelist() if "payload/" in n]
+              assert payload, "wheel is missing the module payload"
+              assert any("payload/skills/bmad-tdd-coordinator/SKILL.md" in n for n in payload)
+          print(f"payload files in wheel: {len(payload)}")
+          EOF

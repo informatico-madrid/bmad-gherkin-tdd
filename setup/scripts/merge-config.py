@@ -75,14 +75,14 @@ def load_yaml_file(path: str) -> dict:
     file_path = Path(path)
     if not file_path.exists():
         return {}
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         content = yaml.safe_load(f)
     return content if content else {}
 
 
 def load_json_file(path: str) -> dict:
     """Load a JSON file."""
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -313,9 +313,12 @@ def extract_user_settings(module_yaml: dict, answers: dict) -> dict:
 
     module_answers = answers.get("module", {})
     for var_name, var_def in module_yaml.items():
-        if isinstance(var_def, dict) and var_def.get("user_setting") is True:
-            if var_name in module_answers:
-                user_settings[var_name] = module_answers[var_name]
+        if (
+            isinstance(var_def, dict)
+            and var_def.get("user_setting") is True
+            and var_name in module_answers
+        ):
+            user_settings[var_name] = module_answers[var_name]
 
     return user_settings
 
