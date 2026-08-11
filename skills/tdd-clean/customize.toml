@@ -1,0 +1,13 @@
+# Skill-default customization surface (layer 3). Real overrides live in
+# _bmad/custom/<name>.toml (team, layer 2) and _bmad/custom/<name>.user.toml
+# (personal, layer 1). Empty here on purpose — arrays append.
+
+[workflow]
+activation_steps_prepend = []
+activation_steps_append = []
+persistent_facts = []
+on_complete = ""
+
+# Default commands. Projects override in _bmad/custom/tdd-clean.toml.
+test_cmd = "uv run pytest"
+cleaner_cmd = "uv run python scripts/cleaner_gate.py"

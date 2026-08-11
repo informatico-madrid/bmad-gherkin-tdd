@@ -1,0 +1,12 @@
+# --- bmad-loop adapter profile: opencode-http-review ---
+# Review flow: routes through bmad-dev-auto (NEVER the TDD coordinator).
+# Preserves ledger args from the engine's canonical prompt.
+#
+name = "opencode-http-review"
+binary = "opencode"
+prompt_template = "Use the {skill} skill now: {args} — If `{implementation_artifacts}/frontier-quality-<story-key>.json` exists, read it once as advisory input: apply only safe, in-scope improvements and document ignored suggestions; missing, malformed, or unconvincing frontier advice NEVER blocks or overrides the signed contract. After applying ANY patches that touch production or test code, run the project's mutation gate. If survivors exist: set followup_review_recommended=true in the spec and return to dev — do NOT fix the survivors yourself."
+usage_parser = "none"
+skill_tree = ".agents/skills"
+
+[hooks]
+dialect = "none"

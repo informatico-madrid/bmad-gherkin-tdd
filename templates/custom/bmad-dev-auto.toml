@@ -1,0 +1,53 @@
+# Team override template for bmad-dev-auto — routes the unattended dev primitive
+# through the BMAD TDD coordinator (bmad-gherkin-tdd module).
+#
+# Copy into {project-root}/_bmad/custom/bmad-dev-auto.toml and merge with any
+# existing project overrides (preserve the project's own mission/paths/facts).
+# Tokens like {spec_file} and {implementation_artifacts} are substituted at run time.
+
+[workflow]
+implementation_handoff = """
+Invoke `bmad-tdd-coordinator` skill synchronously: `dev this story {spec_file}`.
+Coordinator owns every signed @s RED -> GREEN -> CLEAN -> REFACTOR and invokes the real
+tdd-red / tdd-green / tdd-clean / tdd-refactor skills.
+
+## Owns
+- Orquestación RED -> GREEN -> CLEAN -> REFACTOR por cada @s firmado
+- Bitácora TDD de cada fase (ROJO/VERDE/CLEAN/REFACTOR status)
+- Veredicto final de la story (PASS / NEEDS_REVIEW / BLOCKED)
+- Gates de RELEASE (mutación, test, gates adicionales del proyecto)
+
+## Does Not Own
+- Edición directa de archivos de producción o tests (todo va a través del coordinador TDD)
+- Decisión de qué AC implementar primero (la decide el contrato Gherkin)
+- Modificación del contrato Gherkin (solo el humano firma)
+- Ejecución de mutación fuera de la fase REFACTOR
+- Decisiones de arquitectura (eso lo hace architect-review)
+
+Direct prod/test edits by bmad-dev-auto are forbidden; inability to invoke coordinator -> HALT blocked.
+On return report files changed, bitacora phases, exact verification outcomes, unfinished work, residual risks.
+Propagate coordinator HALT as blocked.
+The coordinator is implementation-only and returns evidence: after its report, return to
+bmad-dev-auto, resume bmad-dev-auto step-03 Implement at Verify, then read and follow
+./step-04-review.md; do not end the outer turn — the outer workflow continues Verify ->
+Review and owns completion.
+"""
+activation_steps_append = [
+  "PILOT GATE: accept only a spec that names exactly one signed Gherkin @s, one integration boundary, at most one live dependency, one verification command with expected output, one final observable, and a closed allowed-file list. Otherwise HALT blocked before implementation.",
+  "TDD DELEGATION GATE: the implementation subagent must invoke bmad-tdd-coordinator for the current @s and complete RED -> GREEN -> CLEAN -> REFACTOR with the durable four-phase bitacora. Production edits before the mechanical gate records RED are forbidden; if the subagent cannot invoke the coordinator, HALT blocked rather than implementing directly.",
+  "TDD SUBAGENT TYPES GATE: TDD phases are executed by invoking task() with the EXACT subagent_type: tdd-red-ornith (RED), tdd-green-ornith (GREEN), tdd-refactor-ornith (REFACTOR), tdd-clean-ornith (CLEAN). NEVER use subagent_type='general' for TDD phases — the general subagent lacks the task() tool and cannot invoke the TDD skills, which stalls the cycle.",
+  "VERIFICATION_PREEXISTING GATE (test-only bundles): if the bundle intent only fixes/completes the Given of an EXISTING test (no new feature, no prod change), do NOT run RED. Classify verification_preexisting and invoke task(subagent_type='tdd-green-ornith', prompt='classification=verification_preexisting\\n<evidence>') — the marker unlocks the test-edit path in the gate.",
+  "CLOSURE GATE: SKIP, XFAIL, collect-only, deferred mutation, deferred product proof, and fake-only port wiring cannot satisfy an acceptance criterion. Distinguish infra_error from quality_failure so infrastructure failures do not consume repair attempts.",
+]
+persistent_facts = [
+  "file:{project-root}/_bmad/gherkin-tdd/docs/contract-rules.md",
+  "TDD SUBAGENT TYPES: task(subagent_type='tdd-red-ornith'|'tdd-green-ornith'|'tdd-refactor-ornith'|'tdd-clean-ornith') — NEVER 'general' for TDD phases (general lacks task() tool).",
+  "TEST-ONLY BUNDLES: intent fixing an EXISTING test's Given/precondition (no new feature, no prod change) → verification_preexisting path: task(tdd-green-ornith) with 'classification=verification_preexisting' marker, no RED.",
+]
+on_complete = """
+WORKFLOW_COMPLETION_CONTRACT: before ending the outer run, verify the spec frontmatter
+declares `status: done` and the `## Auto Run Result` section reports Status: done; then
+create and verify the bmad-dev-auto-result- marker file at the EXACT path injected by the
+engine under {implementation_artifacts} — use that injected path verbatim, never invent a
+task id or path.
+"""

@@ -1,0 +1,13 @@
+# --- bmad-loop adapter profile: opencode-http (dev) ---
+# Direct TDD coordinator routing for initial and repair flows.
+# Skills live in the local .agents/skills tree; hooks dialect is none.
+#
+name = "opencode-http"
+binary = "opencode"
+prompt_template = "Use the bmad-tdd-coordinator skill now: dev this story {args}"
+usage_parser = "none"
+skill_tree = ".agents/skills"
+first_run_note = "run opencode auth login once on this machine; headless servers reuse stored credentials"
+
+[hooks]
+dialect = "none"

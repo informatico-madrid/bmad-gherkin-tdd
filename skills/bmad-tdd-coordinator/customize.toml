@@ -1,0 +1,23 @@
+# Skill-default customization surface (layer 3). Real overrides live in
+# _bmad/custom/<name>.toml (team, layer 2) and _bmad/custom/<name>.user.toml
+# (personal, layer 1). Empty here on purpose — arrays append via
+# resolve_customization.py (structural merge).
+
+[workflow]
+activation_steps_prepend = []
+activation_steps_append = []
+persistent_facts = []
+on_complete = ""
+
+# Pre-RED CLASSIFY Gate: controls when RED can be skipped for functions already
+# implemented + mutation-tested. MSI threshold for verification_preexisting.
+verification_preexisting_threshold = 100
+verification_evidence_sources = ["{implementation_artifacts}/*"]
+ambiguous_action = "STOP"
+
+# Release gates — the exact commands a project supplies (or overrides) to run
+# tests and mutation. Project overrides live in _bmad/custom/bmad-tdd-coordinator.toml.
+test_cmd = "uv run pytest"
+mutation_cmd = "make mutation-check"
+msi_minimum = 85
+coverage_required = 100
