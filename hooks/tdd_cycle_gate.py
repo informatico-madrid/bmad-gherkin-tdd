@@ -16,23 +16,34 @@ State machine (one open ``@s`` cycle at a time), persisted in the state dir
       ▲                                                           │
       │                                            (Edit src/** allowed)
       │                                                           ▼
-      └──(story edit "REFACTOR:")── REFACTOR ◀─(story edit "VERDE:")─ GREEN_SEEN
-                                                                ▲ (pytest GREEN)
+      │                                                (pytest GREEN)──▶ GREEN_SEEN
+      │                                                                     │
+      │                                                          (story edit "VERDE:") ▼
+      └──(story edit "REFACTOR:")── REFACTOR ◀─(story edit "CLEAN:")── CLEAN ────────────┘
+                                                        ▲  (tdd-clean gate:
+                                                        │   cleaner + coverage)
+
+  A ``development`` RED that PASSES instead of failing (loop mode) is a protocol
+  violation: the gate moves to ``RED_VIOLATION`` and denies every further tool
+  until the cycle is reset (``python3 hooks/tdd_cycle_gate.py reset``).
 
 Enforced PreToolUse chokepoints (deny = exit 2, reason on stderr → fed back to the agent):
   • Edit/Write/MultiEdit to production (``src/**``):
-        READY      → deny (write a failing test first — TDD Law 1)
-        RED_SEEN   → deny (log the ROJO entry before writing production)
-        CODING     → ALLOW (minimal code to pass)
-        GREEN_SEEN → deny (log VERDE before continuing)
-        REFACTOR   → allow if tdd-refactor seen (no quality-gate gate)
-  • Edit/Write/MultiEdit creating a new test (``tests/**``) while GREEN_SEEN/REFACTOR:
-        → deny (close the current @s — log VERDE + REFACTOR — before the next test)
+        READY         → deny (write a failing test first — TDD Law 1)
+        RED_SEEN      → deny (log the ROJO entry before writing production)
+        CODING        → ALLOW (minimal code to pass)
+        GREEN_SEEN    → deny (log VERDE before continuing)
+        CLEAN         → allow if tdd-clean seen (structural refactor only)
+        REFACTOR      → allow if tdd-refactor seen (no quality-gate gate)
+        RED_VIOLATION → deny (RED passed; cycle must be reset)
+  • Edit/Write/MultiEdit creating a new test (``tests/**``) while GREEN_SEEN/CLEAN:
+        → deny (close the current @s — log VERDE + CLEAN + REFACTOR — before the next test)
 
 Observed PostToolUse events (advance the machine, never block):
   • Bash running pytest (not mutmut): RED in READY → RED_SEEN; GREEN in CODING → GREEN_SEEN.
-  • Edit/Write to the story ``.md``: "ROJO:"@RED_SEEN→CODING, "VERDE:"@GREEN_SEEN→REFACTOR,
-    "REFACTOR:"@REFACTOR→READY (cycle closed).
+  • Bash reporting PASS in READY while tdd-red is pending (loop mode): READY → RED_VIOLATION.
+  • Edit/Write to the story ``.md``: "ROJO:"@RED_SEEN→CODING, "VERDE:"@GREEN_SEEN→CLEAN,
+    "CLEAN:"@CLEAN→REFACTOR, "REFACTOR:"@REFACTOR→READY (cycle closed).
 
 Activation: the gate is **active only while a story is ``in-progress``** in the sprint-status
 file (configured via ``BMAD_TDD_SPRINT_STATUS``, default
@@ -67,7 +78,7 @@ import re
 import sys
 import uuid
 from collections.abc import Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -99,20 +110,22 @@ _STORY_IN_PROGRESS_RE = re.compile(r"^\d+-\d+-\S.*:\s*in-progress\b")
 _PROD_PREFIX = os.environ.get("BMAD_TDD_PROD_PREFIX", "src/")
 _TEST_PREFIX = os.environ.get("BMAD_TDD_TEST_PREFIX", "tests/")
 
-# Phases of one Red→Green→Refactor cycle.
-READY, RED_SEEN, CODING, GREEN_SEEN, REFACTOR = (
+# Phases of one Red→Green→Clean→Refactor cycle.
+READY, RED_SEEN, CODING, GREEN_SEEN, CLEAN, REFACTOR, RED_VIOLATION = (
     "READY",
     "RED_SEEN",
     "CODING",
     "GREEN_SEEN",
+    "CLEAN",
     "REFACTOR",
+    "RED_VIOLATION",
 )
 
 # Required skill order (index-based enforcement).
 _SKILL_ORDER = tuple(
     os.environ.get(
         "BMAD_TDD_SKILL_ORDER",
-        "bmad-tdd-coordinator,tdd-red,tdd-green,tdd-refactor",
+        "bmad-tdd-coordinator,tdd-red,tdd-green,tdd-clean,tdd-refactor",
     ).split(",")
 )
 
@@ -154,19 +167,13 @@ def _file_lock(state_file: Path):
     """
     lock_path = _lock_file_for(state_file)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_fd = open(lock_path, "a+")
-    try:
+    with open(lock_path, "a+") as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        yield
-    finally:
         try:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        except OSError:
-            pass
-        try:
-            lock_fd.close()
-        except OSError:
-            pass
+            yield
+        finally:
+            with suppress(OSError):
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
 
 
 def _is_loop_mode() -> bool:
@@ -193,6 +200,10 @@ class State:
     # Model-routing gate: Task→Skill routing.
     # phase_agent_seen records which Task agent was invoked for the current phase.
     phase_agent_seen: list[str] = field(default_factory=list)
+    # RED-pending guard: True once tdd-red-ornith is invoked in READY, cleared
+    # when a FAIL is observed or the cycle closes. A pytest PASS while
+    # red_pending is True is a protocol violation → RED_VIOLATION.
+    red_pending: bool = False
     # Internal: track which file was loaded from, for save().
     _state_file: Path = field(default=_STATE_FILE, repr=False)
 
@@ -200,8 +211,18 @@ class State:
     def load(cls, state_file: Path) -> State:
         try:
             data = json.loads(state_file.read_text(encoding="utf-8"))
-            fields = ("phase", "mode", "bypass_reason", "updated", "story_key", "cycle",
-                      "skill_seen", "last_skill_at", "phase_agent_seen")
+            fields = (
+                "phase",
+                "mode",
+                "bypass_reason",
+                "updated",
+                "story_key",
+                "cycle",
+                "skill_seen",
+                "last_skill_at",
+                "phase_agent_seen",
+                "red_pending",
+            )
             known = {k: data[k] for k in fields if k in data}
             obj = cls(**known)
             obj._state_file = state_file
@@ -229,18 +250,14 @@ class State:
             with tmp.open("w", encoding="utf-8") as fh:
                 fh.write(payload)
                 fh.flush()
-                try:
-                    os.fsync(fh.fileno())
-                except OSError:
-                    pass  # fsync best-effort
+                with suppress(OSError):
+                    os.fsync(fh.fileno())  # fsync best-effort
             os.replace(tmp, sf)
             tmp.unlink(missing_ok=True)
         except Exception:
             # If os.replace fails, clean up temp to avoid leftovers
-            try:
+            with suppress(OSError):
                 tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
             raise
 
 
@@ -328,8 +345,8 @@ _VERDE_FIX = (
     "bitácora del story antes de seguir tocando producción."
 )
 _NEXT_TEST_FIX = (
-    "🧪 Puerta TDD: cierra el @s actual antes del siguiente test. Registra 'VERDE:' y 'REFACTOR:' "
-    "(o 'REFACTOR: nada') en la bitácora del story. Estado del ciclo: {phase}."
+    "🧪 Puerta TDD: cierra el @s actual antes del siguiente test. Registra 'VERDE:', 'CLEAN:' "
+    "y 'REFACTOR:' (o 'REFACTOR: nada') en la bitácora del story. Estado del ciclo: {phase}."
 )
 _BYPASS_HINT = (
     "\n(Si NO estás en un ciclo TDD —matando mutantes, refactor masivo, chore— usa el bypass "
@@ -354,11 +371,11 @@ _REFACTOR_INCOMPLETE_FIX = (
 def _parse_bitacora_tokens(body: str) -> set[str]:
     """Extract bitácora tokens from edit text using colon-delimited markers.
 
-    Detects 'ROJO:', 'VERDE:', 'REFACTOR:' substrings — reliable substring match,
-    not regex word-boundary (which can fail after punctuation).
+    Detects 'ROJO:', 'VERDE:', 'CLEAN:', 'REFACTOR:' substrings — reliable
+    substring match, not regex word-boundary (which can fail after punctuation).
     """
     tokens: set[str] = set()
-    for tok in ("ROJO", "VERDE", "REFACTOR"):
+    for tok in ("ROJO", "VERDE", "CLEAN", "REFACTOR"):
         if f"{tok}:" in body:
             tokens.add(tok)
     return tokens
@@ -391,8 +408,9 @@ def _bitacora_guard(state: State, tool_input: dict) -> None:
 
     Rules:
     - REFACTOR token present: require phase==REFACTOR AND tdd-refactor in skill_seen.
-    - VERDE token (not full content): require phase in {GREEN_SEEN, REFACTOR} AND tdd-green.
-    - ROJO token: require phase in {RED_SEEN, CODING, GREEN_SEEN, REFACTOR} AND tdd-red.
+    - CLEAN token present: require phase==CLEAN AND tdd-clean in skill_seen.
+    - VERDE token (not full content): require phase in {GREEN_SEEN, CLEAN, REFACTOR} AND tdd-green.
+    - ROJO token: require phase in {RED_SEEN, CODING, GREEN_SEEN, CLEAN, REFACTOR} AND tdd-red.
     - Full content (all 3 tokens) in REFACTOR: allow only if red+green+refactor all seen.
     """
     parts = [
@@ -406,20 +424,20 @@ def _bitacora_guard(state: State, tool_input: dict) -> None:
         return
 
     has_refactor = "REFACTOR" in tokens
+    has_clean = "CLEAN" in tokens
     has_verde = "VERDE" in tokens
     has_rojo = "ROJO" in tokens
     is_full = has_refactor and has_verde and has_rojo
 
     # ── REFACTOR token: strictest check ──────────────────────────────────
-    if has_refactor:
-        if state.phase != REFACTOR or "tdd-refactor" not in state.skill_seen:
-            _deny(
-                "🚫 REFACTOR fuera de fase o sin skill visto. "
-                f"Fase actual: {state.phase} (requerido REFACTOR). "
-                f"tdd-refactor en skill_seen: {'tdd-refactor' in state.skill_seen}. "
-                "El token REFACTOR solo es válido en fase REFACTOR con el skill registrado."
-            )
-            return
+    if has_refactor and (state.phase != REFACTOR or "tdd-refactor" not in state.skill_seen):
+        _deny(
+            "🚫 REFACTOR fuera de fase o sin skill visto. "
+            f"Fase actual: {state.phase} (requerido REFACTOR). "
+            f"tdd-refactor en skill_seen: {'tdd-refactor' in state.skill_seen}. "
+            "El token REFACTOR solo es válido en fase REFACTOR con el skill registrado."
+        )
+        return
 
     # ── Full content (all 3 tokens) ──────────────────────────────────────
     if is_full:
@@ -432,25 +450,32 @@ def _bitacora_guard(state: State, tool_input: dict) -> None:
         )
         return
 
+    # ── CLEAN token (partial) ────────────────────────────────────────────
+    if has_clean and (state.phase != CLEAN or "tdd-clean" not in state.skill_seen):
+        _deny(
+            f"🚫 CLEAN fuera de fase o sin skill visto. "
+            f"Fase actual: {state.phase} (requerido CLEAN). "
+            f"tdd-clean en skill_seen: {'tdd-clean' in state.skill_seen}."
+        )
+        return
+
     # ── VERDE token (partial) ────────────────────────────────────────────
-    if has_verde:
+    if has_verde and (
         # tdd-green validates in CODING path without tdd-red (verification_preexisting).
-        # Require only phase in {GREEN_SEEN, REFACTOR} AND tdd-green seen.
-        if state.phase not in {GREEN_SEEN, REFACTOR} or "tdd-green" not in state.skill_seen:
-            _deny(
-                f"🚫 VERDE fuera de fase o sin skill visto. "
-                f"Fase actual: {state.phase} (requerido GREEN_SEEN o REFACTOR). "
-                f"tdd-green en skill_seen: {'tdd-green' in state.skill_seen}."
-            )
-            return
+        # Require only phase in {GREEN_SEEN, CLEAN, REFACTOR} AND tdd-green seen.
+        state.phase not in {GREEN_SEEN, CLEAN, REFACTOR} or "tdd-green" not in state.skill_seen
+    ):
+        _deny(
+            f"🚫 VERDE fuera de fase o sin skill visto. "
+            f"Fase actual: {state.phase} (requerido GREEN_SEEN, CLEAN o REFACTOR). "
+            f"tdd-green en skill_seen: {'tdd-green' in state.skill_seen}."
+        )
+        return
 
     # ── ROJO token (partial) ─────────────────────────────────────────────
     if has_rojo:
-        red_required_phases = {RED_SEEN, CODING, GREEN_SEEN, REFACTOR}
-        if (
-            state.phase not in red_required_phases
-            or "tdd-red" not in state.skill_seen
-        ):
+        red_required_phases = {RED_SEEN, CODING, GREEN_SEEN, CLEAN, REFACTOR}
+        if state.phase not in red_required_phases or "tdd-red" not in state.skill_seen:
             _deny(
                 f"🚫 ROJO fuera de fase o sin skill visto. "
                 f"Fase actual: {state.phase} "
@@ -505,7 +530,7 @@ def _validate_skill_order(state: State, skill_name: str) -> tuple[bool, str]:
         if "bmad-tdd-coordinator" not in state.skill_seen:
             return False, (
                 "🚫 Orden TDD violado: 'tdd-green' requiere 'bmad-tdd-coordinator' antes. "
-                "Skill order obligatorio: coordinator → red → green → refactor."
+                "Skill order obligatorio: coordinator → red → green → clean → refactor."
             )
         if "tdd-green-ornith" not in state.phase_agent_seen:
             return False, (
@@ -519,13 +544,33 @@ def _validate_skill_order(state: State, skill_name: str) -> tuple[bool, str]:
             )
         return True, ""
 
+    # tdd-clean: requires coordinator + tdd-clean-ornith + phase CLEAN.
+    if skill_name == "tdd-clean":
+        if "bmad-tdd-coordinator" not in state.skill_seen:
+            return False, (
+                "🚫 Orden TDD violado: 'tdd-clean' requiere 'bmad-tdd-coordinator' antes. "
+                "Skill order obligatorio: coordinator → red → green → clean → refactor."
+            )
+        if "tdd-clean-ornith" not in state.phase_agent_seen:
+            return False, (
+                "🚫 tdd-clean requiere primero invocar el Task 'tdd-clean-ornith'. "
+                "El Skill NO puede invocarse directamente sin el Task intermedio."
+            )
+        if state.phase != CLEAN:
+            return False, (
+                f"🚫 tdd-clean solo válido en fase CLEAN (requiere bitácora VERDE). "
+                f"Fase actual: {state.phase}."
+            )
+        return True, ""
+
     # tdd-refactor: requires coordinator + tdd-refactor-ornith + phase REFACTOR.
-    # After VERDE transition, refactor proceeds without requiring all three predecessors.
+    # After VERDE→CLEAN→REFACTOR transitions, refactor proceeds without requiring
+    # all three predecessors.
     if skill_name == "tdd-refactor":
         if "bmad-tdd-coordinator" not in state.skill_seen:
             return False, (
                 "🚫 Orden TDD violado: 'tdd-refactor' requiere 'bmad-tdd-coordinator' antes. "
-                "Skill order obligatorio: coordinator → red → green → refactor."
+                "Skill order obligatorio: coordinator → red → green → clean → refactor."
             )
         if "tdd-refactor-ornith" not in state.phase_agent_seen:
             return False, (
@@ -535,7 +580,7 @@ def _validate_skill_order(state: State, skill_name: str) -> tuple[bool, str]:
         if state.phase != REFACTOR:
             return False, (
                 f"🚫 tdd-refactor solo válido en fase REFACTOR "
-                f"(requiere tdd-green + bitácora VERDE). "
+                f"(requiere tdd-clean + bitácora CLEAN). "
                 f"Fase actual: {state.phase}."
             )
         return True, ""
@@ -557,8 +602,8 @@ def handle_pre_tool_use(tool_name: str, tool_input: dict, state: State) -> None:
         sys.exit(0)
 
     if kind == "prod":
-        if state.phase in (CODING, REFACTOR):
-            sys.exit(0)  # legitimate: writing-to-green / refactor-in-green
+        if state.phase in (CODING, CLEAN, REFACTOR):
+            sys.exit(0)  # legitimate: writing-to-green / clean-refactor / refactor-in-green
         if state.phase == READY:
             qg_pass = _check_quality_gate_pass()
             if qg_pass is False:
@@ -568,20 +613,34 @@ def handle_pre_tool_use(tool_name: str, tool_input: dict, state: State) -> None:
             _deny(_ROJO_FIX + _BYPASS_HINT)
         if state.phase == GREEN_SEEN:
             _deny(_VERDE_FIX + _BYPASS_HINT)
-    elif kind == "test" and state.phase in (GREEN_SEEN, REFACTOR):
+    elif kind == "test" and state.phase in (GREEN_SEEN, CLEAN, REFACTOR):
         _deny(_NEXT_TEST_FIX.format(phase=state.phase) + _BYPASS_HINT)
     sys.exit(0)
 
 
 def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: State) -> None:
     """Loop-mode PreToolUse handler: observes skills, blocks bash writes, enforces cycle."""
+    if state.phase == RED_VIOLATION:
+        _deny(
+            "🚫 RED_VIOLATION: un test pasó durante la fase RED cuando debía fallar "
+            "(pytest PASS en READY con tdd-red pendiente). El ciclo está bloqueado. "
+            "STOP: reporta la violación al orquestador — no inventes un RED. "
+            "Recuperación: python3 hooks/tdd_cycle_gate.py reset"
+        )
+
     if tool_name == "Skill":
         skill_name = (tool_input.get("skill_name", "") or "").strip().lower()
         if not skill_name:
             sys.exit(0)  # no skill name → inert
 
         # Unknown skill: allow but don't advance state
-        if skill_name not in ("bmad-tdd-coordinator", "tdd-red", "tdd-green", "tdd-refactor"):
+        if skill_name not in (
+            "bmad-tdd-coordinator",
+            "tdd-red",
+            "tdd-green",
+            "tdd-clean",
+            "tdd-refactor",
+        ):
             sys.exit(0)
 
         # Validate ordering (includes phase_agent_seen check for Phase 2 routing)
@@ -607,6 +666,7 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
         _TASK_AGENT_PHASE = {
             "tdd-red-ornith": READY,
             "tdd-green-ornith": CODING,
+            "tdd-clean-ornith": CLEAN,
             "tdd-refactor-ornith": REFACTOR,
         }
 
@@ -620,20 +680,19 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
         # verification_preexisting path: tdd-green-ornith in READY with exact
         # standalone marker + nonempty evidence text → accept, transition READY→CODING.
         # All other READY green Tasks remain denied. Do not trust partial/case-mutated markers.
-        if (subagent_type == "tdd-green-ornith"
-                and state.phase == READY
-                and "bmad-tdd-coordinator" in state.skill_seen):
-            if _verify_preexisting_marker(prompt_text):
-                # Record green task, transition READY→CODING, save+audit
-                if "tdd-green-ornith" not in state.phase_agent_seen:
-                    state.phase_agent_seen.append("tdd-green-ornith")
-                state.phase = CODING
-                state.save()
-                _audit(
-                    "TDD_GREEN_VERIFIED: phase READY→CODING "
-                    "(marker valid, prompt evidence present)"
-                )
-                sys.exit(0)
+        if (
+            subagent_type == "tdd-green-ornith"
+            and state.phase == READY
+            and "bmad-tdd-coordinator" in state.skill_seen
+            and _verify_preexisting_marker(prompt_text)
+        ):
+            # Record green task, transition READY→CODING, save+audit
+            if "tdd-green-ornith" not in state.phase_agent_seen:
+                state.phase_agent_seen.append("tdd-green-ornith")
+            state.phase = CODING
+            state.save()
+            _audit("TDD_GREEN_VERIFIED: phase READY→CODING (marker valid, prompt evidence present)")
+            sys.exit(0)
 
         if state.phase != required_phase:
             _deny(
@@ -645,6 +704,8 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
         # Record the Task agent in phase_agent_seen (only Task handler mutates this)
         if subagent_type not in state.phase_agent_seen:
             state.phase_agent_seen.append(subagent_type)
+        if subagent_type == "tdd-red-ornith":
+            state.red_pending = True
         state.save()
         sys.exit(0)
 
@@ -686,6 +747,11 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
             sys.exit(0)
 
         if kind == "test":
+            # New test while the current @s is still open (GREEN_SEEN/CLEAN):
+            # close the cycle first — log VERDE + CLEAN + REFACTOR.
+            if state.phase in (GREEN_SEEN, CLEAN):
+                _deny(_NEXT_TEST_FIX.format(phase=state.phase) + _BYPASS_HINT)
+
             # Test edits require tdd-red seen (TDD Law 1) — UNLESS this is the
             # verification_preexisting path (tdd-green-ornith invoked with the
             # exact `classification=verification_preexisting` marker, no RED
@@ -709,6 +775,7 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
             #   - RED_SEEN: always deny
             #   - GREEN_SEEN: allow if tdd-green seen (writing-to-green)
             #   - CODING: allow if tdd-green seen
+            #   - CLEAN: allow if tdd-clean seen (structural refactor)
             #   - REFACTOR: allow if tdd-refactor seen
             #   - READY (post-cycle): allow if tdd-green or tdd-refactor seen
             if state.phase == RED_SEEN:
@@ -725,6 +792,13 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
                     "VERDE no está registrado. "
                     "Añade la línea 'VERDE:' a la bitácora del story "
                     "antes de seguir tocando producción."
+                )
+            elif state.phase == CLEAN:
+                if "tdd-clean" in state.skill_seen:
+                    sys.exit(0)
+                _deny(
+                    "🧹 Puerta TDD (loop mode): "
+                    "necesitas invocar tdd-clean antes de refactorizar estructura."
                 )
             elif state.phase == REFACTOR:
                 if "tdd-refactor" in state.skill_seen:
@@ -747,8 +821,9 @@ def _process_loop_skill(skill_name: str, state: State) -> None:
 
     Skills register in skill_seen. Phase transitions follow the canonical flow:
       - coordinator in READY: registers, stays READY
-      - tdd-red in READY: registers, stays RED_SEEN (pytest FAIL drives transition)
-      - tdd-green in CODING: registers, stays CODING (pytest PASS drives transition)
+      - tdd-red in READY: registers, stays READY (pytest FAIL drives READY→RED_SEEN)
+      - tdd-green in CODING: registers, stays CODING (pytest PASS drives CODING→GREEN_SEEN)
+      - tdd-clean in CLEAN: registers, stays CLEAN (CLEAN: bitácora drives CLEAN→REFACTOR)
       - tdd-refactor in REFACTOR: registers ONLY — does NOT close cycle early.
         Only the REFACTOR: bitácora entry closes the cycle.
     """
@@ -773,10 +848,15 @@ def _process_loop_skill(skill_name: str, state: State) -> None:
             state.last_skill_at = now
         # Phase: stays CODING (pytest PASS drives CODING→GREEN_SEEN)
 
-    elif skill_name == "tdd-refactor":
-        if "tdd-refactor" not in state.skill_seen:
-            state.skill_seen.append("tdd-refactor")
+    elif skill_name == "tdd-clean":
+        if "tdd-clean" not in state.skill_seen:
+            state.skill_seen.append("tdd-clean")
             state.last_skill_at = now
+        # Phase: stays CLEAN (CLEAN: bitácora drives CLEAN→REFACTOR)
+
+    elif skill_name == "tdd-refactor" and "tdd-refactor" not in state.skill_seen:
+        state.skill_seen.append("tdd-refactor")
+        state.last_skill_at = now
         # Phase: MUST STAY REFACTOR. Cycle is closed ONLY by REFACTOR: bitácora entry.
 
 
@@ -807,10 +887,17 @@ def handle_post_tool_use(
         outcome = _bash_outcome(command, _stringify(tool_response))
         if outcome == "red" and state.phase == READY:
             state.phase = RED_SEEN
+            state.red_pending = False
             changed = True
         elif outcome == "green" and state.phase == CODING:
             state.phase = GREEN_SEEN
+            state.red_pending = False
             changed = True
+        elif outcome == "green" and state.phase == READY and _is_loop_mode() and state.red_pending:
+            # Protocol violation: a development RED passed instead of failing.
+            state.phase = RED_VIOLATION
+            changed = True
+            _audit("RED_VIOLATION: pytest PASS during RED phase in READY")
     elif tool_name in ("Edit", "Write", "MultiEdit"):
         paths = _target_paths(tool_input)
         if _is_loop_mode():
@@ -835,6 +922,9 @@ def _handle_loop_post_tool_use(paths: list[str], tool_input: dict, state: State)
             state.phase = CODING
             changed = True
         elif "VERDE:" in body and state.phase == GREEN_SEEN and "tdd-green" in state.skill_seen:
+            state.phase = CLEAN
+            changed = True
+        elif "CLEAN:" in body and state.phase == CLEAN and "tdd-clean" in state.skill_seen:
             state.phase = REFACTOR
             changed = True
         elif "REFACTOR:" in body and state.phase == REFACTOR and "tdd-refactor" in state.skill_seen:
@@ -844,6 +934,7 @@ def _handle_loop_post_tool_use(paths: list[str], tool_input: dict, state: State)
             # continues to work without coordinator re-invocation.
             state.phase = READY
             state.cycle += 1
+            state.red_pending = False
             changed = True
             _audit("WARNING: REFACTOR→READY transition (out-of-order bitácora check)")
     return changed
@@ -869,7 +960,7 @@ def _handle_legacy_post_tool_use(paths: list[str], tool_input: dict, state: Stat
                 f"Transition skipped to preserve state integrity."
             )
         elif "VERDE:" in body and state.phase == GREEN_SEEN:
-            state.phase = REFACTOR
+            state.phase = CLEAN
             changed = True
         elif "VERDE:" in body and state.phase != GREEN_SEEN:
             _audit(
@@ -877,12 +968,18 @@ def _handle_legacy_post_tool_use(paths: list[str], tool_input: dict, state: Stat
                 f"(phase={state.phase}, expected GREEN_SEEN). "
                 f"Transition skipped to preserve state integrity."
             )
+        elif "CLEAN:" in body and state.phase == CLEAN:
+            state.phase = REFACTOR
+            changed = True
+        elif "CLEAN:" in body and state.phase != CLEAN:
+            _audit(
+                f"WARNING: legacy bitácora 'CLEAN:' out of phase "
+                f"(phase={state.phase}, expected CLEAN). "
+                f"Transition skipped to preserve state integrity."
+            )
         elif "REFACTOR:" in body and state.phase == REFACTOR:
             qg_pass = _check_quality_gate_pass()
-            if qg_pass is None:
-                state.phase = READY
-                changed = True
-            elif qg_pass is True:
+            if qg_pass is None or qg_pass is True:
                 state.phase = READY
                 changed = True
             else:
@@ -955,21 +1052,21 @@ _PROTECTED_LITERALS = [
 # Write-indicator patterns (each is a regex fragment matched against the command).
 # NOTE: r">(?!&)\s*" matches redirect > but NOT stderr redirects like 2>&1 or >&2.
 _WRITE_INDICATORS = [
-    r">(?!&)\s*",      # redirect > (but NOT 2>&1 or >&2)
-    r">>(?!&)\s*",     # append >> (but NOT >>&2)
-    r"\btee\b",        # tee
-    r"\bcp\b\s+",      # cp
-    r"\bmv\b\s+",      # mv
-    r"\binstall\b\s+", # install
+    r">(?!&)\s*",  # redirect > (but NOT 2>&1 or >&2)
+    r">>(?!&)\s*",  # append >> (but NOT >>&2)
+    r"\btee\b",  # tee
+    r"\bcp\b\s+",  # cp
+    r"\bmv\b\s+",  # mv
+    r"\binstall\b\s+",  # install
     r"\bdd\b.*\bof=",  # dd with of=
-    r"\bsed\b\s+-i\b", # sed -i
-    r"\bperl\b\s+-e\b",# perl -e
-    r"\bruby\b\s+-e\b",# ruby -e
-    r"\bbase64\b\s+-d\b", # base64 -d
-    r"\btruncate\b",   # truncate
-    r"\btouch\b",      # touch
-    r"\brm\b\s+",      # rm
-    r"\bpython3?\s+-c\b",     # python -c / python3 -c
+    r"\bsed\b\s+-i\b",  # sed -i
+    r"\bperl\b\s+-e\b",  # perl -e
+    r"\bruby\b\s+-e\b",  # ruby -e
+    r"\bbase64\b\s+-d\b",  # base64 -d
+    r"\btruncate\b",  # truncate
+    r"\btouch\b",  # touch
+    r"\brm\b\s+",  # rm
+    r"\bpython3?\s+-c\b",  # python -c / python3 -c
     r"\buv\s+run\s+python3?\s+-c\b",  # uv run python -c / uv run python3 -c
 ]
 
@@ -1186,15 +1283,19 @@ def main() -> int:
                 if loaded.story_key and loaded.story_key != story_key:
                     # Different story: start fresh
                     state = State(
-                        phase=READY, mode="tdd",
-                        story_key=story_key or "", _state_file=state_file,
+                        phase=READY,
+                        mode="tdd",
+                        story_key=story_key or "",
+                        _state_file=state_file,
                     )
                     _audit(f"MIGRATE state for story {story_key}")
                 elif not loaded.story_key:
                     # Legacy state without story_key in loop mode: reset to READY
                     state = State(
-                        phase=READY, mode="tdd",
-                        story_key=story_key or "", _state_file=state_file,
+                        phase=READY,
+                        mode="tdd",
+                        story_key=story_key or "",
+                        _state_file=state_file,
                     )
                     _audit("MIGRATE legacy state → fresh state for loop mode")
                 else:

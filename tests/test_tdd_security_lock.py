@@ -30,7 +30,9 @@ PLUGIN_ROOT = Path(__file__).parents[1] / "opencode" / "plugins"
 
 
 def _setup_workspace(
-    tmp_path: Path, *, story_key: str = "5-0-sec-repair",
+    tmp_path: Path,
+    *,
+    story_key: str = "5-0-sec-repair",
 ) -> Path:
     """Set up workspace with gate, story dir, sprint-status."""
     gate_target = tmp_path / "hooks" / "tdd_cycle_gate.py"
@@ -41,11 +43,13 @@ def _setup_workspace(
     story_dir.mkdir(parents=True, exist_ok=True)
     story_file = story_dir / f"story-{story_key}.md"
     story_file.write_text(
-        f"# Story {story_key}\n\n## TDD Bitácora\n\n", encoding="utf-8",
+        f"# Story {story_key}\n\n## TDD Bitácora\n\n",
+        encoding="utf-8",
     )
     sprint = tmp_path / "_bmad-output" / "implementation-artifacts" / "sprint-status.yaml"
     sprint.write_text(
-        f"development_status:\n  {story_key}: in-progress\n", encoding="utf-8",
+        f"development_status:\n  {story_key}: in-progress\n",
+        encoding="utf-8",
     )
     return tmp_path
 
@@ -60,7 +64,10 @@ def _state_file(workspace: Path, story_key: str = "5-0-sec-repair") -> Path:
 
 
 def _run_gate(
-    workspace: Path, payload: dict, *, story_key: str = "5-0-sec-repair",
+    workspace: Path,
+    payload: dict,
+    *,
+    story_key: str = "5-0-sec-repair",
 ) -> tuple[int, str, str]:
     env = {**os.environ, "BMAD_LOOP_MODE": "1", "BMAD_LOOP_STORY_KEY": story_key}
     result = subprocess.run(
@@ -68,7 +75,9 @@ def _run_gate(
         cwd=str(workspace),
         env=env,
         input=json.dumps(payload),
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     return result.returncode, result.stdout, result.stderr
 
@@ -83,14 +92,16 @@ def _skill(name: str) -> dict:
 
 def _task(agent: str) -> dict:
     return {
-        "hook_event_name": "PreToolUse", "tool_name": "Task",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Task",
         "tool_input": {"subagent_type": agent},
     }
 
 
 def _edit_story(new_string: str) -> dict:
     return {
-        "hook_event_name": "PostToolUse", "tool_name": "Edit",
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Edit",
         "tool_input": {
             "file_path": "_bmad-output/implementation-artifacts/story-5-0-sec-repair.md",
             "new_string": new_string,
@@ -100,7 +111,8 @@ def _edit_story(new_string: str) -> dict:
 
 def _pytest_outcome(outcome: str) -> dict:
     return {
-        "hook_event_name": "PostToolUse", "tool_name": "Bash",
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
         "tool_input": {"command": "uv run pytest tests/"},
         "tool_response": {"stdout": f"1 {outcome}", "stderr": ""},
     }
@@ -125,7 +137,9 @@ def _gate_subprocess(workspace: Path, payload: dict, *, story_key: str = "5-0-se
         cwd=str(workspace),
         env=env,
         input=json.dumps(payload),
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
 
 
@@ -142,13 +156,20 @@ def test_concurrent_20_coordinator_calls_valid_json(tmp_path: Path) -> None:
     state_file = _state_file(workspace)
 
     # Seed state with coordinator already seen (idempotent scenario)
-    _save_state(workspace, {
-        "phase": "READY", "mode": "tdd", "bypass_reason": "",
-        "updated": "2026-01-01T00:00:00+00:00",
-        "story_key": "5-0-sec-repair", "cycle": 1,
-        "skill_seen": ["bmad-tdd-coordinator"],
-        "last_skill_at": "", "phase_agent_seen": [],
-    })
+    _save_state(
+        workspace,
+        {
+            "phase": "READY",
+            "mode": "tdd",
+            "bypass_reason": "",
+            "updated": "2026-01-01T00:00:00+00:00",
+            "story_key": "5-0-sec-repair",
+            "cycle": 1,
+            "skill_seen": ["bmad-tdd-coordinator"],
+            "last_skill_at": "",
+            "phase_agent_seen": [],
+        },
+    )
 
     # Spawn 20 concurrent subprocess calls
     payloads = [_skill("bmad-tdd-coordinator")] * 20
@@ -163,8 +184,9 @@ def test_concurrent_20_coordinator_calls_valid_json(tmp_path: Path) -> None:
     state = json.loads(raw)
 
     # Exactly one coordinator in skill_seen
-    assert state["skill_seen"].count("bmad-tdd-coordinator") == 1, \
+    assert state["skill_seen"].count("bmad-tdd-coordinator") == 1, (
         f"Expected exactly 1 coordinator, got {state['skill_seen'].count('bmad-tdd-coordinator')}"
+    )
 
     # Phase still READY
     assert state["phase"] == "READY"
@@ -174,8 +196,9 @@ def test_concurrent_20_coordinator_calls_valid_json(tmp_path: Path) -> None:
         name = entry.name
         if name.endswith(".lock"):
             continue  # sidecar lock is expected
-        assert not name.startswith("tdd-state-") or name.endswith(".json"), \
+        assert not name.startswith("tdd-state-") or name.endswith(".json"), (
             f"Temp file leftover: {name}"
+        )
         assert not name.endswith(".tmp"), f"Temp .tmp leftover: {name}"
         assert not name.endswith(".new"), f"Temp .new leftover: {name}"
 
@@ -192,12 +215,20 @@ def test_concurrent_mixed_never_corrupt_json(tmp_path: Path) -> None:
     state_file = _state_file(workspace)
 
     # Seed initial state
-    _save_state(workspace, {
-        "phase": "READY", "mode": "tdd", "bypass_reason": "",
-        "updated": "2026-01-01T00:00:00+00:00",
-        "story_key": "5-0-sec-repair", "cycle": 0,
-        "skill_seen": [], "last_skill_at": "", "phase_agent_seen": [],
-    })
+    _save_state(
+        workspace,
+        {
+            "phase": "READY",
+            "mode": "tdd",
+            "bypass_reason": "",
+            "updated": "2026-01-01T00:00:00+00:00",
+            "story_key": "5-0-sec-repair",
+            "cycle": 0,
+            "skill_seen": [],
+            "last_skill_at": "",
+            "phase_agent_seen": [],
+        },
+    )
 
     # Mix of operations: some valid, some will be denied
     payloads = []
@@ -247,23 +278,32 @@ def test_preseed_bypass_loop_resets_to_tdd(tmp_path: Path) -> None:
     workspace = _setup_workspace(tmp_path)
 
     # Pre-seed bypass state (phase=READY so coordinator call succeeds after reset)
-    _save_state(workspace, {
-        "phase": "READY", "mode": "bypass", "bypass_reason": "killing mutants",
-        "updated": "2026-01-01T00:00:00+00:00",
-        "story_key": "5-0-sec-repair", "cycle": 3,
-        "skill_seen": ["bmad-tdd-coordinator"],
-        "last_skill_at": "", "phase_agent_seen": [],
-    })
+    _save_state(
+        workspace,
+        {
+            "phase": "READY",
+            "mode": "bypass",
+            "bypass_reason": "killing mutants",
+            "updated": "2026-01-01T00:00:00+00:00",
+            "story_key": "5-0-sec-repair",
+            "cycle": 3,
+            "skill_seen": ["bmad-tdd-coordinator"],
+            "last_skill_at": "",
+            "phase_agent_seen": [],
+        },
+    )
 
     # Call gate in loop mode (any tool triggers processing)
     rc, _, _ = _run_gate(workspace, _skill("bmad-tdd-coordinator"))
     assert rc == 0
 
     state = _load_state(workspace)
-    assert state["mode"] == "tdd", \
+    assert state["mode"] == "tdd", (
         f"Bypass should be reset to tdd in loop mode. Got mode={state['mode']!r}"
-    assert state["bypass_reason"] == "", \
+    )
+    assert state["bypass_reason"] == "", (
         f"Bypass reason should be cleared. Got {state['bypass_reason']!r}"
+    )
 
 
 def test_preseed_bypass_reset_in_nonready_phase(tmp_path: Path) -> None:
@@ -271,24 +311,32 @@ def test_preseed_bypass_reset_in_nonready_phase(tmp_path: Path) -> None:
     workspace = _setup_workspace(tmp_path)
 
     # Pre-seed bypass with phase=REFACTOR (non-trivial phase)
-    _save_state(workspace, {
-        "phase": "REFACTOR", "mode": "bypass", "bypass_reason": "old",
-        "updated": "2026-01-01T00:00:00+00:00",
-        "story_key": "5-0-sec-repair", "cycle": 3,
-        "skill_seen": ["bmad-tdd-coordinator"],
-        "last_skill_at": "", "phase_agent_seen": [],
-    })
+    _save_state(
+        workspace,
+        {
+            "phase": "REFACTOR",
+            "mode": "bypass",
+            "bypass_reason": "old",
+            "updated": "2026-01-01T00:00:00+00:00",
+            "story_key": "5-0-sec-repair",
+            "cycle": 3,
+            "skill_seen": ["bmad-tdd-coordinator"],
+            "last_skill_at": "",
+            "phase_agent_seen": [],
+        },
+    )
 
     # Call any tool — bypass reset must happen even if the tool itself is denied
     # We use a Bash call (inert in loop mode for non-write commands)
     rc, _, _ = _run_gate(
         workspace,
-        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "echo"}}
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "echo"}},
     )
 
     state = _load_state(workspace)
-    assert state["mode"] == "tdd", \
+    assert state["mode"] == "tdd", (
         f"Bypass should be reset regardless of phase. Got mode={state['mode']!r}"
+    )
     assert state["bypass_reason"] == ""
 
 
@@ -296,12 +344,20 @@ def test_preseed_bypass_reset_saves_under_lock(tmp_path: Path) -> None:
     """Bypass reset must actually persist to disk (save under lock)."""
     workspace = _setup_workspace(tmp_path)
 
-    _save_state(workspace, {
-        "phase": "READY", "mode": "bypass", "bypass_reason": "old reason",
-        "updated": "2026-01-01T00:00:00+00:00",
-        "story_key": "5-0-sec-repair", "cycle": 0,
-        "skill_seen": [], "last_skill_at": "", "phase_agent_seen": [],
-    })
+    _save_state(
+        workspace,
+        {
+            "phase": "READY",
+            "mode": "bypass",
+            "bypass_reason": "old reason",
+            "updated": "2026-01-01T00:00:00+00:00",
+            "story_key": "5-0-sec-repair",
+            "cycle": 0,
+            "skill_seen": [],
+            "last_skill_at": "",
+            "phase_agent_seen": [],
+        },
+    )
 
     # Make a call that triggers load + bypass reset + save
     _run_gate(workspace, _skill("bmad-tdd-coordinator"))
@@ -346,17 +402,18 @@ def test_symlink_parent_denied_in_loop(tmp_path: Path) -> None:
         story_key="5-0-sec-repair",
     )
     assert rc == 2, f"Expected DENY for symlink parent, got rc={rc}"
-    assert "symlink" in stderr.lower() or "denied" in stderr.lower(), \
+    assert "symlink" in stderr.lower() or "denied" in stderr.lower(), (
         f"Error message should mention symlink/denied. Got: {stderr}"
+    )
 
     # CRITICAL: No writes to the external directory
     external_entries = list(real_dir.iterdir())
-    assert len(external_entries) == 0, \
-        f"External directory received writes: {external_entries}"
+    assert len(external_entries) == 0, f"External directory received writes: {external_entries}"
 
     # No state file created through the symlink
-    assert not link_dir.is_dir() or len(list(link_dir.iterdir())) == 0, \
+    assert not link_dir.is_dir() or len(list(link_dir.iterdir())) == 0, (
         "State file was created through symlinked directory"
+    )
 
 
 def test_symlink_lock_file_denied_in_loop(tmp_path: Path) -> None:
@@ -364,12 +421,20 @@ def test_symlink_lock_file_denied_in_loop(tmp_path: Path) -> None:
     workspace = _setup_workspace(tmp_path)
 
     # Pre-create the state file (so lock path is computed) and seed state
-    _save_state(workspace, {
-        "phase": "READY", "mode": "tdd", "bypass_reason": "",
-        "updated": "2026-01-01T00:00:00+00:00",
-        "story_key": "5-0-sec-repair", "cycle": 0,
-        "skill_seen": [], "last_skill_at": "", "phase_agent_seen": [],
-    })
+    _save_state(
+        workspace,
+        {
+            "phase": "READY",
+            "mode": "tdd",
+            "bypass_reason": "",
+            "updated": "2026-01-01T00:00:00+00:00",
+            "story_key": "5-0-sec-repair",
+            "cycle": 0,
+            "skill_seen": [],
+            "last_skill_at": "",
+            "phase_agent_seen": [],
+        },
+    )
 
     # Create a real lock target and symlink
     real_lock = tmp_path / "real_lock"
@@ -403,10 +468,12 @@ def test_unknown_task_audit_only_no_mutation(tmp_path: Path) -> None:
     _run_gate(workspace, _task("some-random-agent"))
 
     state_after = _load_state(workspace)
-    assert state_after["phase_agent_seen"] == agent_before, \
+    assert state_after["phase_agent_seen"] == agent_before, (
         f"phase_agent_seen mutated: {agent_before} → {state_after['phase_agent_seen']}"
-    assert state_after["skill_seen"] == skill_before, \
+    )
+    assert state_after["skill_seen"] == skill_before, (
         f"skill_seen mutated: {skill_before} → {state_after['skill_seen']}"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -447,16 +514,25 @@ def test_existing_black_box_full_cycle_still_works(tmp_path: Path) -> None:
     _run_gate(workspace, _pytest_outcome("passed"))
     assert phase() == "GREEN_SEEN"
 
-    # 7. VERDE bitácora → REFACTOR
+    # 7. VERDE bitácora → GREEN_SEEN→CLEAN
     _run_gate(workspace, _edit_story("VERDE: test passes"))
+    assert phase() == "CLEAN"
+
+    # 8. tdd-clean-ornith + tdd-clean → stays CLEAN
+    _run_gate(workspace, _task("tdd-clean-ornith"))
+    _run_gate(workspace, _skill("tdd-clean"))
+    assert phase() == "CLEAN"
+
+    # 9. CLEAN bitácora → CLEAN→REFACTOR
+    _run_gate(workspace, _edit_story("CLEAN: structural pass"))
     assert phase() == "REFACTOR"
 
-    # 8. tdd-refactor-ornith + tdd-refactor (stays REFACTOR)
+    # 10. tdd-refactor-ornith + tdd-refactor (stays REFACTOR)
     _run_gate(workspace, _task("tdd-refactor-ornith"))
     _run_gate(workspace, _skill("tdd-refactor"))
     assert phase() == "REFACTOR"
 
-    # 9. REFACTOR: bitácora closes cycle → READY
+    # 11. REFACTOR: bitácora closes cycle → READY
     _run_gate(workspace, _edit_story("REFACTOR: cleanup done"))
     assert phase() == "READY"
 
@@ -503,7 +579,9 @@ def test_legacy_bypass_cli_outside_loop_unchanged(tmp_path: Path) -> None:
         ["python3", str(PYTHON_GATE), "bypass", "testing legacy"],
         cwd=str(workspace),
         env={**os.environ},  # NO BMAD_LOOP_MODE
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0
     assert "bypass" in result.stdout.lower() or "audited" in result.stdout.lower()
@@ -519,22 +597,36 @@ def test_legacy_bash_detector_unchanged(tmp_path: Path) -> None:
     workspace = _setup_workspace(tmp_path)
 
     # Set up legacy state
-    _save_state(workspace, {
-        "phase": "READY", "mode": "tdd", "bypass_reason": "",
-        "updated": "2026-01-01T00:00:00+00:00",
-        "story_key": "", "cycle": 0,
-        "skill_seen": [], "last_skill_at": "", "phase_agent_seen": [],
-    }, story_key="")
+    _save_state(
+        workspace,
+        {
+            "phase": "READY",
+            "mode": "tdd",
+            "bypass_reason": "",
+            "updated": "2026-01-01T00:00:00+00:00",
+            "story_key": "",
+            "cycle": 0,
+            "skill_seen": [],
+            "last_skill_at": "",
+            "phase_agent_seen": [],
+        },
+        story_key="",
+    )
 
     result = subprocess.run(
         ["python3", str(PYTHON_GATE)],
         cwd=str(workspace),
         env={**os.environ},  # NO loop mode
-        input=json.dumps({
-            "hook_event_name": "PreToolUse", "tool_name": "Bash",
-            "tool_input": {"command": "echo x > src/x.py"},
-        }),
-        capture_output=True, text=True, timeout=10,
+        input=json.dumps(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo x > src/x.py"},
+            }
+        ),
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     # In legacy mode, Bash is inert (only Edit/Write/MultiEdit are gated)
     assert result.returncode == 0
