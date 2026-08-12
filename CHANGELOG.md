@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-12
+
+### Documentation
+- Clarified that `harness-quality-gate` is an optional sibling project, not an
+  automatically installed runtime dependency. The bundled CLEAN toolchain remains
+  self-contained; projects compose the full harness through their local overrides.
+- Documented SwarmForge's conceptual influence on the CLEAN/hardening separation and
+  clarified that this is an independent BMAD implementation.
+
 ## [0.1.0] - 2026-08-12
 
 ### Added
@@ -40,5 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - bmad-loop dev profile no longer bypasses `bmad-dev-auto` by invoking the coordinator
   directly.
 
-[Unreleased]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/informatico-madrid/bmad-gherkin-tdd/releases/tag/v0.1.0

@@ -7,7 +7,7 @@ description: BMAD TDD Coordinator orchestrates RED GREEN CLEAN REFACTOR phases w
 
 ## Overview
 
-This skill manages TDD story execution by classifying each @s as either **development** (full RED→GREEN→CLEAN→REFACTOR) or **verification_preexisting** (skip RED when prior story already mutation-tested the function), routing to the appropriate path before code touches. Acts as a TDD discipline enforcer with a Pre-RED classification gate that prevents redundant test creation while preserving 100% MSI guarantees. Use when the user says "dev this story" or "implement the next story in the sprint plan". Produces a mutation-clean, release-gated story implementation with full bitácora traceability.
+This skill manages TDD story execution by classifying each @s as either **development** (full RED→GREEN→CLEAN→REFACTOR) or **verification_preexisting** (skip RED when prior story already mutation-tested the function), routing to the appropriate path before code touches. Acts as a TDD discipline enforcer with a Pre-RED classification gate that prevents redundant test creation while preserving the configured MSI threshold (default 85%, with 100% kill-or-justified preferred). Use when the user says "dev this story" or "implement the next story in the sprint plan". Produces a mutation-clean, release-gated story implementation with full bitácora traceability.
 
 ## Conventions
 

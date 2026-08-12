@@ -52,6 +52,19 @@ project overrides.
 - A coding CLI whose skill tree this module installs into (OpenCode `.agents/skills`,
   Claude `.claude/skills`).
 
+### Optional quality-gate sibling
+
+`bmad-gherkin-tdd` does **not** install
+[`harness-quality-gate`](https://github.com/informatico-madrid/harness-quality-gate) and
+does not declare it as a Python dependency. The module is usable on its own: its CLEAN
+phase ships a self-contained structural checker, and test, mutation and cleaner commands
+are supplied through project overrides.
+
+Projects that need the full polyglot quality and security harness may install
+`harness-quality-gate` separately and point their `_bmad/custom/*.toml` commands and
+context files at that sibling checkout. This separation keeps the methodology module
+portable while allowing projects such as Rompehielos to compose both tools.
+
 ## Install
 
 ### 1. Install the module package
@@ -170,6 +183,15 @@ uv build              # sdist + wheel (verifies the payload stages into the whee
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+
+## Influences
+
+The separation between behavior-preserving CLEAN work and later mutation hardening was
+inspired by the role pipeline described by Robert C. Martin's
+[`unclebob/swarm-forge`](https://github.com/unclebob/swarm-forge). This project is an
+independent implementation for BMAD: it adds signed per-scenario contracts, a durable TDD
+bitácora, configurable MSI enforcement and a mechanical cycle gate. It is not affiliated
+with or endorsed by SwarmForge.
 
 ## Troubleshooting
 

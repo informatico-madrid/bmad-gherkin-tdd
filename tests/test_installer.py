@@ -111,7 +111,7 @@ def test_status_reflects_install(project: Path) -> None:
     installer.install(project, project / ".agents" / "skills")
     st = installer.status(project)
     assert st["installed"] is True
-    assert st["version"] == "0.1.0"
+    assert st["version"] == "0.1.1"
     assert installer.manifest_path(project).is_file()
 
 
