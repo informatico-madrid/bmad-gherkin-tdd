@@ -1,0 +1,26 @@
+{
+  "name": "bmad-gherkin-tdd",
+  "owner": { "name": "informatico-madrid" },
+  "license": "MIT",
+  "homepage": "https://github.com/informatico-madrid/bmad-gherkin-tdd",
+  "repository": "https://github.com/informatico-madrid/bmad-gherkin-tdd",
+  "keywords": ["bmad", "tdd", "gherkin", "testing", "mutation-testing"],
+  "plugins": [
+    {
+      "name": "bmad-gherkin-tdd",
+      "source": "./",
+      "description": "Contract-first TDD methodology for BMAD projects — signed Gherkin dev-contracts, strict RED->GREEN->CLEAN->REFACTOR coordinator, and mutation testing integration.",
+      "version": "0.1.3",
+      "author": { "name": "informatico-madrid" },
+      "skills": [
+        "./skills/gherkin-author",
+        "./skills/bmad-tdd-coordinator",
+        "./skills/tdd-red",
+        "./skills/tdd-green",
+        "./skills/tdd-clean",
+        "./skills/tdd-refactor",
+        "./setup"
+      ]
+    }
+  ]
+}

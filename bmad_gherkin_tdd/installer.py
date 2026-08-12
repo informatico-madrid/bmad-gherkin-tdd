@@ -13,7 +13,7 @@ from pathlib import Path
 
 MODULE_CODE = "gherkin-tdd"
 MODULE_NAME = "BMAD Gherkin TDD"
-MODULE_VERSION = "0.1.2"
+MODULE_VERSION = "0.1.3"
 
 SKILL_NAMES = (
     "gherkin-author",
