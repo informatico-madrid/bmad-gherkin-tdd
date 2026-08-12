@@ -1,4 +1,4 @@
 module,phase,name,code,sequence,workflow-file,command,required,agent,options,description,output-location,outputs
 BMAD Gherkin TDD,anytime,Setup Gherkin TDD,GT,,skill:bmad-gherkin-tdd-setup,bmad-gherkin-tdd-setup,false,,,Install or update BMAD Gherkin TDD module config and help entries.,{project-root}/_bmad,config.yaml entries
-BMAD Gherkin TDD,anytime,Gherkin Author,GA,,skill:gherkin-author,gherkin-author,false,,,"Distil a story's Acceptance Criteria into the Gherkin dev-contract .feature (@s1..@sn) and walk it through human signature.",contracts_dir,".feature contract"
+BMAD Gherkin TDD,anytime,Gherkin Author,GA,,skill:gherkin-author,gherkin-author,false,,,"Distil a story's Acceptance Criteria into the Gherkin dev-contract .feature (@s1..@sn) and approve it in the applicable signature mode.",contracts_dir,".feature contract"
 BMAD Gherkin TDD,4-implementation,TDD Coordinator,TC,,skill:bmad-tdd-coordinator,bmad-tdd-coordinator,false,,,Orchestrate RED→GREEN→CLEAN→REFACTOR for each @s in a story.,implementation_artifacts,"bitácora TDD"

@@ -8,13 +8,12 @@ version = "0.1.0"
 description = "Contract-first TDD development methodology module for BMAD projects"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
 keywords = ["bmad", "tdd", "gherkin", "contract-first", "mutation-testing", "agent"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -34,10 +33,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/bmad-gherkin-tdd"
-Repository = "https://github.com/your-org/bmad-gherkin-tdd"
-Issues = "https://github.com/your-org/bmad-gherkin-tdd/issues"
-Documentation = "https://github.com/your-org/bmad-gherkin-tdd#readme"
+Homepage = "https://github.com/informatico-madrid/bmad-gherkin-tdd"
+Repository = "https://github.com/informatico-madrid/bmad-gherkin-tdd"
+Issues = "https://github.com/informatico-madrid/bmad-gherkin-tdd/issues"
+Documentation = "https://github.com/informatico-madrid/bmad-gherkin-tdd#readme"
 
 [project.scripts]
 bmad-gherkin-tdd = "bmad_gherkin_tdd.cli:main"

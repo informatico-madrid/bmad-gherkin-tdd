@@ -20,7 +20,8 @@ tdd-red / tdd-green / tdd-clean / tdd-refactor skills.
 ## Does Not Own
 - Edición directa de archivos de producción o tests (todo va a través del coordinador TDD)
 - Decisión de qué AC implementar primero (la decide el contrato Gherkin)
-- Modificación del contrato Gherkin (solo el humano firma)
+- Modificación del contrato Gherkin fuera del modo aplicable: firma humana en flujo interactivo,
+  `coordinator-auto` únicamente bajo `BMAD_LOOP_MODE=1`
 - Ejecución de mutación fuera de la fase REFACTOR
 - Decisiones de arquitectura (eso lo hace architect-review)
 

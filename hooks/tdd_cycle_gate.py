@@ -376,7 +376,7 @@ def _parse_bitacora_tokens(body: str) -> set[str]:
     """
     tokens: set[str] = set()
     for tok in ("ROJO", "VERDE", "CLEAN", "REFACTOR"):
-        if f"{tok}:" in body:
+        if re.search(rf"(?:{tok}:|\*\*{tok}(?:\s+\(@s[^)]+\))?\*\*)", body):
             tokens.add(tok)
     return tokens
 
@@ -918,16 +918,19 @@ def _handle_loop_post_tool_use(paths: list[str], tool_input: dict, state: State)
     changed = False
     if any(_is_story_md(p) for p in paths):
         body = _edit_body(tool_input)
-        if "ROJO:" in body and state.phase == RED_SEEN and "tdd-red" in state.skill_seen:
+        tokens = _parse_bitacora_tokens(body)
+        if "ROJO" in tokens and state.phase == RED_SEEN and "tdd-red" in state.skill_seen:
             state.phase = CODING
             changed = True
-        elif "VERDE:" in body and state.phase == GREEN_SEEN and "tdd-green" in state.skill_seen:
+        elif "VERDE" in tokens and state.phase == GREEN_SEEN and "tdd-green" in state.skill_seen:
             state.phase = CLEAN
             changed = True
-        elif "CLEAN:" in body and state.phase == CLEAN and "tdd-clean" in state.skill_seen:
+        elif "CLEAN" in tokens and state.phase == CLEAN and "tdd-clean" in state.skill_seen:
             state.phase = REFACTOR
             changed = True
-        elif "REFACTOR:" in body and state.phase == REFACTOR and "tdd-refactor" in state.skill_seen:
+        elif (
+            "REFACTOR" in tokens and state.phase == REFACTOR and "tdd-refactor" in state.skill_seen
+        ):
             # Cycle closed: phase resets to READY, cycle counter increments.
             # phase_agent_seen and skill_seen persist across cycles so that
             # cross-cycle Skill validation (e.g. tdd-red requiring coordinator)

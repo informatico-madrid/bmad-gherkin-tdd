@@ -6,10 +6,9 @@
 strict RED → GREEN → CLEAN → REFACTOR coordinator with a durable per-scenario bitácora,
 and plug-in integration with `bmad-loop`.
 
-[![CI](https://github.com/your-org/bmad-gherkin-tdd/actions/workflows/ci.yml/badge.svg)](https://github.com/your-org/bmad-gherkin-tdd/actions/workflows/ci.yml)
+[![CI](https://github.com/informatico-madrid/bmad-gherkin-tdd/actions/workflows/ci.yml/badge.svg)](https://github.com/informatico-madrid/bmad-gherkin-tdd/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](#requirements)
-[![PyPI version](https://img.shields.io/pypi/v/bmad-gherkin-tdd)](https://pypi.org/project/bmad-gherkin-tdd/)
 
 </div>
 
@@ -58,13 +57,8 @@ project overrides.
 ### 1. Install the module package
 
 ```bash
-# From PyPI (once published)
-pip install bmad-gherkin-tdd
-# or
-uv tool install bmad-gherkin-tdd
-
-# From a checkout
-git clone https://github.com/your-org/bmad-gherkin-tdd.git
+# From GitHub
+git clone https://github.com/informatico-madrid/bmad-gherkin-tdd.git
 uv tool install ./bmad-gherkin-tdd
 ```
 
@@ -77,9 +71,9 @@ bmad-gherkin-tdd install --project .
 bmad-gherkin-tdd install --project . --claude
 ```
 
-`install` is idempotent: it copies the skills, resolver, docs, hook, opencode assets,
+`install` is idempotent: it copies the skills, resolver, docs, hook, OpenCode assets,
 bmad-loop profiles and override templates, then registers the module with the official
-BMAD merge scripts (config.yaml section + `modules` list + module-help.csv). Use
+BMAD merge scripts (config.yaml section + `modules` list + `_bmad/_config/bmad-help.csv`). Use
 `bmad-gherkin-tdd upgrade` to refresh bundled copies, `bmad-gherkin-tdd uninstall` to
 remove it (user-modified files are preserved), and `bmad-gherkin-tdd status` to inspect.
 
@@ -144,7 +138,7 @@ paths, mission files and product rules:
 | `bmad-tdd-coordinator` | `mutation_cmd` | `make mutation-check` |
 | `bmad-tdd-coordinator` | `msi_minimum` | `85` |
 | `bmad-tdd-coordinator` | `verification_preexisting_threshold` | `100` |
-| `tdd-clean` | `cleaner_cmd` | `uv run python scripts/cleaner_gate.py` |
+| `tdd-clean` | `cleaner_cmd` | `uv run python _bmad/gherkin-tdd/scripts/cleaner_gate.py` |
 | `tdd-red` / `tdd-green` / `tdd-refactor` | `test_cmd` | `uv run pytest` |
 
 ## Layout
@@ -159,7 +153,8 @@ templates/custom/bmad-dev-auto.toml        # routes bmad-dev-auto through the co
 templates/custom/bmad-tdd-coordinator.toml # TDD coordination routine + release gates
 bmad-loop/profiles/*.toml     bmad-loop adapter profiles (dev → bmad-dev-auto → coordinator)
 opencode/agents/opencode.json.template  # tdd-*-ornith subagent definitions
-opencode/plugins/tdd-cycle-gate.js      # opencode tool-mapping + gate relay
+.opencode/plugins/tdd-cycle-gate.js     # installed project plugin (auto-discovered)
+scripts/{cleaner_gate,principles,scan_mutation_sites}.py # self-contained CLEAN toolchain
 docs/contract-rules.md        binding Gherkin contract rules
 tests/                        regression tests for the gate, resolver, coordinator, installer
 ```

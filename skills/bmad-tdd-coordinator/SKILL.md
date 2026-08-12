@@ -15,7 +15,7 @@ This skill manages TDD story execution by classifying each @s as either **develo
 - `{skill-root}` resolves to this skill's installed directory (where `customize.toml` lives).
 - `{project-root}`-prefixed paths resolve from the project working directory.
 - `{skill-name}` resolves to the skill directory's basename.
-- `{contracts_dir}` resolves from the project override layer (default `tests/contracts`).
+- `{contracts_dir}` is the configured project-root-relative contract directory (default `tests/contracts`).
 - `{implementation_artifacts}` resolves from `_bmad/bmm/config.yaml` (default `_bmad-output/implementation-artifacts`).
 
 ## On Activation
@@ -62,14 +62,14 @@ GHERKIN_GATE (contrato autónomo — ejecutar ANTES de INTAKE):
       de loop mode.
 
   Procedimiento (loop_auto):
-   1. Verificar si `{project-root}/{contracts_dir}/<story-key>.feature` existe y
+   1. Verificar si `{contracts_dir}/<story-key>.feature` existe y
       tiene `# Status: APPROVED` en cabecera.
       - Si existe y está APPROVED → logear "GHERKIN_GATE: contract already approved"
         → pasar a INTAKE.
    2. Si NO existe o está en DRAFT → GENERAR/completar el contrato:
      a. Leer la story file completa: Story, Acceptance Criteria, Tasks, scope
         boundaries (do-NOT-implement), Dev Notes.
-     b. Leer `{module-root}/docs/contract-rules.md` — reglas del .feature, non-negotiable.
+     b. Leer `{project-root}/_bmad/gherkin-tdd/docs/contract-rules.md` — reglas del .feature, non-negotiable.
      c. Destilar un Scenario por cada comportamiento observable de los AC,
         incluyendo error paths. Cada Then debe ser medible (exit code, mensaje,
         valor, artifact). Un When por escenario. Sin detalles de implementación.
@@ -99,7 +99,7 @@ GHERKIN_GATE (contrato autónomo — ejecutar ANTES de INTAKE):
 INTAKE (gates de entrada — ejecutar ANTES de PLAN, HALT si fallan):
   - G0 Puerta Gherkin (verificación post-GHERKIN_GATE): confirma que GHERKIN_GATE
       produjo un contrato APPROVED.
-      bash: head -5 {project-root}/{contracts_dir}/<story-key>.feature
+      bash: head -5 {contracts_dir}/<story-key>.feature
       Si no existe o no es APPROVED → HALT (fallo interno de GHERKIN_GATE).
       El .feature aprobado (sus escenarios @s) es el INPUT CANÓNICO de cada fase
       RED, no solo el story file.
@@ -117,13 +117,13 @@ CLASSIFY (nuevo gate entre PLAN e IMPLEMENT_LOOP — ejecutar ANTES de cualquier
        - Cannot locate a prior bitácora line documenting TDD completion for this function
        - Cannot identify implementing commit hash showing the function in its diff
        - Function file has been modified since the last implementing commit
-     Action: Standard RED → GREEN → REFACTOR (existing protocol, unchanged)
+     Action: Standard RED → GREEN → CLEAN → REFACTOR.
 
   B) **verification_preexisting** (skip RED only if ALL 5 conditions hold):
      All conditions MUST be satisfied simultaneously:
        (a) Function/class under test EXISTS in the production package
        (b) A prior story implementation artifact contains a bitácora line documenting
-           TDD completion (RED/GREEN/REFACTOR) for that EXACT function
+           TDD completion (RED/GREEN/CLEAN/REFACTOR) for that EXACT function
        (c) The implementing commit is IDENTIFIABLE by hash and shows the function in its diff
        (d) Mutation stats for the function's MODULE report MSI >= {workflow.verification_preexisting_threshold}
            (default 100, per NFR-13); MSI MUST be verified by running the project's
@@ -132,8 +132,8 @@ CLASSIFY (nuevo gate entre PLAN e IMPLEMENT_LOOP — ejecutar ANTES de cualquier
        (e) `git diff <implementing_commit>..HEAD -- <function_file>` returns EMPTY
            (function unchanged since implementation)
      Action: Skip RED. Invoke tdd-green with 'verification_preexisting' context to confirm
-     existing implementation still passes. Invoke tdd-refactor ONLY if condition (e) becomes
-     non-empty mid-story. Document classification evidence (commit hash, bitácora path:line,
+     existing implementation still passes, then run CLEAN and REFACTOR verification without
+     changing production behavior. Document classification evidence (commit hash, bitácora path:line,
      MSI source) in the bitácora for this @s. NO new production code, NO new test code unless
      an existing test regresses.
 
@@ -228,12 +228,21 @@ es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
 
       ```
       task(
-        subagent_type="tdd-refactor-ornith",
-        description="REFACTOR phase @s<k>",
-        prompt="[contexto: test pasando + git diff desde implementing commit]"
+        subagent_type="tdd-clean-ornith",
+        description="CLEAN phase @s<k> [verification_preexisting]",
+        prompt="[contexto: implementación existente verde + evidencia de clasificación]"
       )
       ```
-      Solo invocar si `git diff <implementing_commit>..HEAD -- <function_file>` devuelve cambios.
+      El subagente ejecuta el gate estructural sin cambiar comportamiento.
+
+      ```
+      task(
+        subagent_type="tdd-refactor-ornith",
+        description="REFACTOR phase @s<k> [verification_preexisting]",
+        prompt="[contexto: test pasando + CLEAN verificado + evidencia de clasificación]"
+      )
+      ```
+      Re-ejecuta mutación y registra MSI; no añade comportamiento nuevo.
 
 RELEASE (gates de salida — ejecutar DESPUÉS del último @s; el coordinator es
   implementation-only y NO cierra la story):
@@ -270,7 +279,7 @@ RELEASE (gates de salida — ejecutar DESPUÉS del último @s; el coordinator es
     no termina el attempt. Después del report, el flujo exterior continúa Verify → Review.
 
 Post-compactación / reanudación: ANTES de tocar código, releer
-`{project-root}/{contracts_dir}/<story-key>.feature` + el spec de la story
+`{contracts_dir}/<story-key>.feature` + el spec de la story
 (`{implementation_artifacts}/<story-key>.md`). La compactación destruye la intención;
 solo el archivo persiste.
 

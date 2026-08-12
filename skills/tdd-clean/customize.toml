@@ -10,4 +10,4 @@ on_complete = ""
 
 # Default commands. Projects override in _bmad/custom/tdd-clean.toml.
 test_cmd = "uv run pytest"
-cleaner_cmd = "uv run python scripts/cleaner_gate.py"
+cleaner_cmd = "uv run python _bmad/gherkin-tdd/scripts/cleaner_gate.py"

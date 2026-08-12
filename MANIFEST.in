@@ -4,10 +4,11 @@ include pyproject.toml
 include setup.py
 recursive-include skills *
 recursive-include templates *
-recursive-include hooks *
+recursive-include hooks *.py
 recursive-include scripts *
 recursive-include docs *
 recursive-include opencode *
 recursive-include bmad-loop *
 recursive-include setup *
-recursive-include tests *
+recursive-include tests *.py
+global-exclude __pycache__ *.py[cod]

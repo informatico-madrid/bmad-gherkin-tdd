@@ -14,7 +14,7 @@ activation_steps_append = [
   "RE-ANCLAJE: ANTES de cada transición (INTAKE→CLASSIFY, dispatch de cada task red/green/clean/refactor, y RELEASE) relee {contracts_dir}/<story-key>.feature (el @s bajo trabajo) + el spec de la story ({implementation_artifacts}/<story-key>.md). La compactación destruye la intención; solo el archivo persiste.",
 ]
 persistent_facts = [
-  "file:{module-root}/docs/contract-rules.md",
+  "file:{project-root}/_bmad/gherkin-tdd/docs/contract-rules.md",
   "TDD SUBAGENT TYPES: task(subagent_type='tdd-red-ornith'|'tdd-green-ornith'|'tdd-refactor-ornith'|'tdd-clean-ornith') — NEVER 'general' for TDD phases (general lacks task() tool).",
 ]
 on_complete = ""

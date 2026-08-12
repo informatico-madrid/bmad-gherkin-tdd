@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-08-11
+## [0.1.0] - 2026-08-12
 
 ### Added
 - Contract-first TDD methodology as an installable BMAD module.
@@ -25,8 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - bmad-loop integration: dev adapter profile routes through `bmad-dev-auto` (which owns
   Verify → Review → closure); `bmad-dev-auto` override template wires the coordinator.
 - Official BMAD installer registration via `setup/scripts/merge-config.py` and
-  `merge-help-csv.py` (config.yaml section, `modules` list, module-help.csv).
-- 108+ regression tests (gate state machine, concurrency locks, symlink denial,
+  `merge-help-csv.py` (config.yaml section, `modules` list, `_config/bmad-help.csv`).
+- 137 regression tests (gate state machine, concurrency locks, symlink denial,
   coordinator consistency, installer, handoff).
 
 ### Fixed
@@ -39,3 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RED_VIOLATION`: a test that passes during RED no longer silently continues to `done`.
 - bmad-loop dev profile no longer bypasses `bmad-dev-auto` by invoking the coordinator
   directly.
+
+[Unreleased]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/informatico-madrid/bmad-gherkin-tdd/releases/tag/v0.1.0

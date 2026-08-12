@@ -18,7 +18,7 @@ into the project's skill tree and wire the `bmad-dev-auto` handoff to the coordi
 > available. After `pip install bmad-gherkin-tdd` (or `uv tool install .` from a
 > checkout), run `bmad-gherkin-tdd install --project {project-root}`. It performs the
 > same install declaratively and idempotently (skills, resolver, docs, hook, opencode
-> assets, bmad-loop profiles, override templates, config.yaml and module-help.csv
+> assets, bmad-loop profiles, override templates, config.yaml and `_config/bmad-help.csv`
 > registration), and supports `upgrade`, `uninstall` and `status`. This manual skill
 > remains the fallback for non-Python or agent-only environments.
 
@@ -32,7 +32,7 @@ preferences and writes them to three files:
   plus a section per module with metadata and module-specific values.
 - **`{project-root}/_bmad/config.user.yaml`** — personal settings intended to be
   gitignored.
-- **`{project-root}/_bmad/module-help.csv`** — registers module capabilities for the
+- **`{project-root}/_bmad/_config/bmad-help.csv`** — registers module capabilities for the
   help system.
 
 Both config scripts use an anti-zombie pattern — existing entries for this module are
@@ -83,7 +83,7 @@ project root before running — these are filesystem paths, not config values.
 
 ```bash
 python3 ./scripts/merge-config.py --config-path "{project-root}/_bmad/config.yaml" --user-config-path "{project-root}/_bmad/config.user.yaml" --module-yaml ./assets/module.yaml --answers {temp-file} --legacy-dir "{project-root}/_bmad"
-python3 ./scripts/merge-help-csv.py --target "{project-root}/_bmad/module-help.csv" --source ./assets/module-help.csv --legacy-dir "{project-root}/_bmad" --module-code gherkin-tdd
+python3 ./scripts/merge-help-csv.py --target "{project-root}/_bmad/_config/bmad-help.csv" --source ./assets/module-help.csv --legacy-dir "{project-root}/_bmad" --module-code gherkin-tdd
 ```
 
 Both scripts output JSON to stdout with results. If either exits non-zero, surface the
@@ -145,7 +145,7 @@ If the project uses bmad-loop (autonomous loop), install the dev adapter profile
 # {project-root}/.bmad-loop/profiles/opencode-http.toml
 name = "opencode-http"
 binary = "opencode"
-prompt_template = "Use the bmad-tdd-coordinator skill now: dev this story {args}"
+prompt_template = "Run the bmad-dev-auto skill on this story now: /bmad-dev-auto {args}"
 usage_parser = "none"
 skill_tree = ".agents/skills"
 ```

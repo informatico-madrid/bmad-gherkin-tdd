@@ -525,6 +525,37 @@ def test_full_tdd_cycle_black_box(tmp_path: Path) -> None:
     assert rc == 0 and phase() == "READY"
 
 
+def test_markdown_bitacora_heading_tokens_drive_full_cycle(tmp_path: Path) -> None:
+    workspace = _setup_workspace(tmp_path)
+    state_path = workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json"
+
+    def phase() -> str:
+        return json.loads(state_path.read_text())["phase"]
+
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))
+    _run_gate(workspace, _skill("tdd-red"))
+    _run_gate(workspace, _pytest_outcome("failed"))
+    _run_gate(workspace, _edit_story("- **ROJO (@s1)** — failing test"))
+    assert phase() == "CODING"
+
+    _run_gate(workspace, _task("tdd-green-ornith"))
+    _run_gate(workspace, _skill("tdd-green"))
+    _run_gate(workspace, _pytest_outcome("passed"))
+    _run_gate(workspace, _edit_story("- **VERDE (@s1)** — passing test"))
+    assert phase() == "CLEAN"
+
+    _run_gate(workspace, _task("tdd-clean-ornith"))
+    _run_gate(workspace, _skill("tdd-clean"))
+    _run_gate(workspace, _edit_story("- **CLEAN (@s1)** — structural checks"))
+    assert phase() == "REFACTOR"
+
+    _run_gate(workspace, _task("tdd-refactor-ornith"))
+    _run_gate(workspace, _skill("tdd-refactor"))
+    _run_gate(workspace, _edit_story("- **REFACTOR (@s1)** — mutation complete"))
+    assert phase() == "READY"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # C. Protected gate state (blocker 3)
 # ═══════════════════════════════════════════════════════════════════════════════

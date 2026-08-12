@@ -55,7 +55,7 @@ description: TDD REFACTOR Phase clean up code with MUTANT_KILLING_GUIDE. Use whe
 - Cambios que alteren comportamiento observable (el refactor preserva)
 - Añadir `# pragma: no mutate` — PROHIBIDO. Usar `mutant-register.md` para documentar sobrevivientes.
 - Checks estructurales previos a mutación (eso es CLEAN: cleaner-gate + coverage)
-- Modificación del contrato Gherkin (solo el humano firma)
+- Modificación del contrato Gherkin (la firma la gestiona gherkin-author o el coordinator en loop_auto)
 - Decisiones de arquitectura (eso lo hace architect-review)
 - No ejecutes `tdd-red`, `tdd-green`, ni `tdd-clean` desde aquí — el coordinador orquesta la secuencia
 

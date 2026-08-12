@@ -1,15 +1,15 @@
 """Regression guard — coordinator-facing sources must NOT direct inline
-`invoke skill: tdd-red|tdd-green|tdd-refactor`.
+`invoke skill: tdd-red|tdd-green|tdd-clean|tdd-refactor`.
 
 The canonical protocol (see the bmad-gherkin-tdd module's model-routing
 contract) requires that every coordinator-facing document identify the
-Task agents `tdd-red-ornith / tdd-green-ornith / tdd-refactor-ornith` where
+Task agents `tdd-red-ornith / tdd-green-ornith / tdd-clean-ornith / tdd-refactor-ornith` where
 sequencing is prescribed. Inline `invoke skill:` directives are stale and
 contradict the Task→Skill routing contract.
 
 Additionally, each coordinator source must use the EXACT dispatch directive
 syntax (`invoke task: tdd-red-ornith`) rather than bare agent names, must
-enforce RED→GREEN→REFACTOR ordering, and prompt.txt must describe all three
+enforce RED→GREEN→CLEAN→REFACTOR ordering, and prompt.txt must describe all three
 CLASSIFY outcomes (development, verification_preexisting, ambiguous/STOP).
 
 Sources under audit (coordinator-facing, consumed by the orchestrator):
@@ -52,13 +52,14 @@ STALE_PATTERNS: list[str] = [
 REQUIRED_TASK_AGENTS: list[str] = [
     "tdd-red-ornith",
     "tdd-green-ornith",
+    "tdd-clean-ornith",
     "tdd-refactor-ornith",
 ]
 
 # Exact dispatch directive forms required in every coordinator source.
 # Pattern: `invoke task: <agent>` (with flexible whitespace).
 EXACT_DIRECTIVE_PATTERN = re.compile(
-    r"invoke\s+task\s*:\s*(tdd-red-ornith|tdd-green-ornith|tdd-refactor-ornith)",
+    r"invoke\s+task\s*:\s*(tdd-red-ornith|tdd-green-ornith|tdd-clean-ornith|tdd-refactor-ornith)",
     re.IGNORECASE,
 )
 
@@ -66,13 +67,13 @@ EXACT_DIRECTIVE_PATTERN = re.compile(
 # variations that simple substring checks miss (e.g. "Invoke Skill: tdd-red",
 # "invoke  skill  :  tdd-green", "INVOKE TASK: TDD-RED-ORNITH").
 STALE_SKILL_DIRECTIVE_RE = re.compile(
-    r"invoke\s+skill\s*:\s*tdd-(?:red|green|refactor)\b",
+    r"invoke\s+skill\s*:\s*tdd-(?:red|green|clean|refactor)\b",
     re.IGNORECASE,
 )
 
 # Classification vocabulary that MUST appear in prompt.txt.
 # These are the three CLASSIFY outcomes from the coordinator protocol:
-#   A) development      — standard RED→GREEN→REFACTOR
+#   A) development      — standard RED→GREEN→CLEAN→REFACTOR
 #   B) verification_preexisting — skip RED, GREEN→REFACTOR only
 #   C) ambiguous        — STOP, report evidence gap
 CLASSIFICATION_VOCAB: list[str] = [
@@ -163,8 +164,8 @@ def test_exact_dispatch_directives_present(label: str, path: Path) -> None:
 
 
 @pytest.mark.parametrize("label, path", COORDINATOR_SOURCES, ids=lambda p: str(p))
-def test_red_green_refactor_ordering(label: str, path: Path) -> None:
-    """Each coordinator source must prescribe RED→GREEN→REFACTOR in that
+def test_red_green_clean_refactor_ordering(label: str, path: Path) -> None:
+    """Each coordinator source must prescribe RED→GREEN→CLEAN→REFACTOR in that
     order. The position of `tdd-red-ornith` must precede `tdd-green-ornith`,
     which must precede `tdd-refactor-ornith`.
 
@@ -176,10 +177,12 @@ def test_red_green_refactor_ordering(label: str, path: Path) -> None:
 
     red_pos = _first_match_position(content, "tdd-red-ornith")
     green_pos = _first_match_position(content, "tdd-green-ornith")
+    clean_pos = _first_match_position(content, "tdd-clean-ornith")
     refactor_pos = _first_match_position(content, "tdd-refactor-ornith")
 
     assert red_pos >= 0, f"'tdd-red-ornith' not found in '{label}'"
     assert green_pos >= 0, f"'tdd-green-ornith' not found in '{label}'"
+    assert clean_pos >= 0, f"'tdd-clean-ornith' not found in '{label}'"
     assert refactor_pos >= 0, f"'tdd-refactor-ornith' not found in '{label}'"
 
     assert red_pos < green_pos, (
@@ -187,11 +190,26 @@ def test_red_green_refactor_ordering(label: str, path: Path) -> None:
         f"(pos {green_pos}) BEFORE tdd-red-ornith (pos {red_pos}). "
         f"RED must come before GREEN."
     )
-    assert green_pos < refactor_pos, (
-        f"Coordinator source '{label}' ({path.name}) has tdd-refactor-ornith "
-        f"(pos {refactor_pos}) BEFORE tdd-green-ornith (pos {green_pos}). "
-        f"GREEN must come before REFACTOR."
+    assert green_pos < clean_pos < refactor_pos, (
+        f"Coordinator source '{label}' ({path.name}) must order GREEN, CLEAN, REFACTOR; "
+        f"found positions {green_pos}, {clean_pos}, {refactor_pos}."
     )
+
+
+def test_no_stale_three_phase_protocol_text() -> None:
+    sources = [
+        PROJECT_ROOT / "skills" / "bmad-tdd-coordinator" / "SKILL.md",
+        PROJECT_ROOT / "skills" / "bmad-tdd-coordinator" / "prompt.txt",
+        PROJECT_ROOT / "templates" / "custom" / "bmad-dev-auto.toml",
+        PROJECT_ROOT / "templates" / "custom" / "bmad-tdd-coordinator.toml",
+        PROJECT_ROOT / "README.md",
+        PROJECT_ROOT / "setup" / "SKILL.md",
+    ]
+    stale = re.compile(r"RED\s*(?:→|->|/)\s*GREEN\s*(?:→|->|/)\s*REFACTOR", re.IGNORECASE)
+    matches = [
+        str(path.relative_to(PROJECT_ROOT)) for path in sources if stale.search(path.read_text())
+    ]
+    assert matches == []
 
 
 @pytest.mark.parametrize("label, path", COORDINATOR_SOURCES, ids=lambda p: str(p))

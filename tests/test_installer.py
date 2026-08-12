@@ -8,6 +8,7 @@ the project's `_bmad/custom/` overrides.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -39,8 +40,11 @@ def test_install_copies_support_files(project: Path) -> None:
     assert (project / "hooks" / "tdd_cycle_gate.py").is_file()
     assert (project / "_bmad" / "scripts" / "resolve_customization.py").is_file()
     assert (project / "_bmad" / "gherkin-tdd" / "docs" / "contract-rules.md").is_file()
-    assert (project / "opencode" / "plugins" / "tdd-cycle-gate.js").is_file()
+    assert (project / ".opencode" / "plugins" / "tdd-cycle-gate.js").is_file()
     assert (project / "opencode" / "agents" / "opencode.json.template").is_file()
+    assert (project / "_bmad" / "gherkin-tdd" / "scripts" / "cleaner_gate.py").is_file()
+    assert (project / "_bmad" / "gherkin-tdd" / "scripts" / "principles.py").is_file()
+    assert (project / "_bmad" / "gherkin-tdd" / "scripts" / "scan_mutation_sites.py").is_file()
     for name in installer.PROFILE_NAMES:
         assert (project / ".bmad-loop" / "profiles" / name).is_file()
     for name in installer.TEMPLATE_NAMES:
@@ -56,7 +60,7 @@ def test_install_registers_module(project: Path) -> None:
         "modules list must include gherkin-tdd"
     )
 
-    help_target = project / "_bmad" / "module-help.csv"
+    help_target = project / "_bmad" / "_config" / "bmad-help.csv"
     assert help_target.is_file()
     text = help_target.read_text(encoding="utf-8")
     assert "BMAD Gherkin TDD" in text and "TDD Coordinator" in text
@@ -97,7 +101,7 @@ def test_uninstall_removes_and_preserves(project: Path) -> None:
     assert installer.MODULE_CODE not in config
     assert installer.MODULE_CODE not in config.get("modules", [])
 
-    help_target = project / "_bmad" / "module-help.csv"
+    help_target = project / "_bmad" / "_config" / "bmad-help.csv"
     if help_target.exists():
         assert "BMAD Gherkin TDD" not in help_target.read_text(encoding="utf-8")
 
@@ -119,3 +123,76 @@ def test_cli_install_and_status(tmp_path: Path) -> None:
     assert main(["status", "--project", str(project)]) == 0
     assert main(["uninstall", "--project", str(project)]) == 0
     assert main(["status", "--project", str(project)]) == 0
+
+
+def test_install_preserves_and_does_not_claim_preexisting_assets(project: Path) -> None:
+    plugin = project / ".opencode" / "plugins" / "tdd-cycle-gate.js"
+    plugin.parent.mkdir(parents=True)
+    plugin.write_text("// project plugin\n", encoding="utf-8")
+    skill = project / ".agents" / "skills" / "tdd-red"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# project skill\n", encoding="utf-8")
+
+    report = installer.install(project, project / ".agents" / "skills", force=True)
+    manifest = json.loads(installer.manifest_path(project).read_text(encoding="utf-8"))
+
+    assert plugin.read_text(encoding="utf-8") == "// project plugin\n"
+    assert (skill / "SKILL.md").read_text(encoding="utf-8") == "# project skill\n"
+    assert ".opencode/plugins/tdd-cycle-gate.js" not in manifest["files"]
+    assert "tdd-red" not in manifest["skills"]
+    assert report["file:.opencode/plugins/tdd-cycle-gate.js"] == "exists (preserved)"
+    assert report["skill:tdd-red"] == "exists (preserved)"
+
+    installer.uninstall(project)
+    assert plugin.read_text(encoding="utf-8") == "// project plugin\n"
+    assert (skill / "SKILL.md").read_text(encoding="utf-8") == "# project skill\n"
+
+
+def test_uninstall_rejects_tampered_manifest_paths(project: Path, tmp_path: Path) -> None:
+    installer.install(project, project / ".agents" / "skills")
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
+    outside.write_text("keep\n", encoding="utf-8")
+    manifest_path = installer.manifest_path(project)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"]["../outside.txt"] = installer._sha256(outside)
+    manifest["skills"]["evil"] = {"path": str(outside), "sha256": installer._sha256(outside)}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    report = installer.uninstall(project)
+
+    assert outside.read_text(encoding="utf-8") == "keep\n"
+    assert report["invalid:../outside.txt"] == "ignored (path escapes project)"
+    assert report["invalid:skill:evil"] == "ignored (path escapes project)"
+
+
+def test_install_rejects_skills_dir_outside_project(project: Path, tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-external-skills"
+    with pytest.raises(ValueError, match="skills_dir must be inside project"):
+        installer.install(project, outside)
+
+
+def test_force_install_preserves_symlinked_skill(project: Path, tmp_path: Path) -> None:
+    skills_dir = project / ".agents" / "skills"
+    skills_dir.mkdir(parents=True)
+    outside = tmp_path.parent / f"{tmp_path.name}-external-skill"
+    outside.mkdir()
+    marker = outside / "SKILL.md"
+    marker.write_text("# external skill\n", encoding="utf-8")
+    (skills_dir / "tdd-red").symlink_to(outside, target_is_directory=True)
+
+    report = installer.install(project, skills_dir, force=True)
+    manifest = json.loads(installer.manifest_path(project).read_text(encoding="utf-8"))
+
+    assert marker.read_text(encoding="utf-8") == "# external skill\n"
+    assert report["skill:tdd-red"] == "exists (preserved)"
+    assert "tdd-red" not in manifest["skills"]
+
+
+def test_install_writes_current_bmad_module_config(project: Path) -> None:
+    installer.install(project, project / ".agents" / "skills")
+
+    module_config = installer.read_yaml(project / "_bmad" / "gherkin-tdd" / "config.yaml")
+    assert module_config == {
+        "contracts_dir": "{project-root}/tests/contracts",
+        "implementation_artifacts": "{project-root}/_bmad-output/implementation-artifacts",
+    }

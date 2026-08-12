@@ -12,7 +12,7 @@ other support matrix at this time.
 ## Reporting a vulnerability
 
 Please do **not** open a public issue for security vulnerabilities. Report them
-privately by opening a [GitHub security advisory](https://github.com/your-org/bmad-gherkin-tdd/security/advisories/new)
+privately by opening a [GitHub security advisory](https://github.com/informatico-madrid/bmad-gherkin-tdd/security/advisories/new)
 (or email the maintainers if the repository does not yet have advisories enabled).
 
 You can expect an acknowledgement within 48 hours and a triage decision within

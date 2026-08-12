@@ -1,20 +1,4 @@
-"""Deterministic, idempotent installer for the BMAD Gherkin TDD module.
-
-Installs the module's payload (skills, resolver, docs, hook, opencode assets,
-bmad-loop profiles, override templates) into a BMAD project and registers the
-module with the official BMAD merge scripts (config.yaml + module-help.csv).
-
-Locating the payload:
-  * Installed distribution (wheel): the build copies the payload into
-    ``bmad_gherkin_tdd/payload/`` — this is the canonical source.
-  * Source checkout: ``bmad_gherkin_tdd/`` lives at the repo root, so the
-    payload dirs are the repo-root siblings (``skills/``, ``templates/``...).
-
-The install is idempotent: re-running on an installed project refreshes the
-bundled copies (upgrade) without touching the project's own ``_bmad/custom/*``
-override layer. ``uninstall`` removes only files recorded in the manifest that
-still byte-match the bundle — user-modified files are preserved and reported.
-"""
+"""Deterministic installer for the BMAD Gherkin TDD module."""
 
 from __future__ import annotations
 
@@ -23,12 +7,13 @@ import json
 import shutil
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 MODULE_CODE = "gherkin-tdd"
 MODULE_NAME = "BMAD Gherkin TDD"
+MODULE_VERSION = "0.1.0"
 
-# Payload directories installed into the project.
 SKILL_NAMES = (
     "gherkin-author",
     "bmad-tdd-coordinator",
@@ -40,35 +25,43 @@ SKILL_NAMES = (
 PROFILE_NAMES = ("opencode-http.toml", "opencode-http-review.toml")
 TEMPLATE_NAMES = ("bmad-dev-auto.toml", "bmad-tdd-coordinator.toml")
 
-# Files installed at fixed project-relative paths (recorded for uninstall).
 FILE_INSTALLS = {
     "_bmad/scripts/resolve_customization.py": "scripts/resolve_customization.py",
     "_bmad/gherkin-tdd/docs/contract-rules.md": "docs/contract-rules.md",
+    "_bmad/gherkin-tdd/scripts/cleaner_gate.py": "scripts/cleaner_gate.py",
+    "_bmad/gherkin-tdd/scripts/principles.py": "scripts/principles.py",
+    "_bmad/gherkin-tdd/scripts/scan_mutation_sites.py": "scripts/scan_mutation_sites.py",
     "hooks/tdd_cycle_gate.py": "hooks/tdd_cycle_gate.py",
-    "opencode/plugins/tdd-cycle-gate.js": "opencode/plugins/tdd-cycle-gate.js",
+    ".opencode/plugins/tdd-cycle-gate.js": "opencode/plugins/tdd-cycle-gate.js",
     "opencode/agents/opencode.json.template": "opencode/agents/opencode.json.template",
 }
 
 
 def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _tree_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    for child in sorted(item for item in path.rglob("*") if item.is_file()):
+        digest.update(child.relative_to(path).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(_sha256(child).encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def module_root() -> Path:
-    """Absolute path to the directory holding the payload dirs."""
-    pkg = Path(__file__).resolve().parent
-    payload = pkg / "payload"
-    if payload.is_dir():
-        return payload
-    return pkg.parent
+    package = Path(__file__).resolve().parent
+    bundled = package / "payload"
+    return bundled if bundled.is_dir() else package.parent
 
 
 def payload(name: str) -> Path:
-    """Path to a payload directory (``skills/``, ``templates/``, ...)."""
     return module_root() / name
 
 
@@ -76,24 +69,59 @@ def manifest_path(project: Path) -> Path:
     return project / "_bmad" / MODULE_CODE / "install.json"
 
 
-def read_config(project: Path) -> dict:
+def read_yaml(path: Path) -> dict:
     import yaml
 
-    path = project / "_bmad" / "config.yaml"
     if not path.exists():
         return {}
-    with path.open(encoding="utf-8") as fh:
-        data = yaml.safe_load(fh)
+    with path.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
     return data if isinstance(data, dict) else {}
 
 
-def write_config(project: Path, config: dict) -> None:
+def write_yaml(path: Path, data: dict) -> None:
     import yaml
 
-    path = project / "_bmad" / "config.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
-        yaml.safe_dump(config, fh, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+def read_config(project: Path) -> dict:
+    return read_yaml(project / "_bmad" / "config.yaml")
+
+
+def write_config(project: Path, config: dict) -> None:
+    write_yaml(project / "_bmad" / "config.yaml", config)
+
+
+def _inside(project: Path, candidate: Path) -> bool:
+    try:
+        return candidate.resolve().is_relative_to(project.resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def _project_path(project: Path, value: str) -> Path | None:
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = project / candidate
+    return candidate if _inside(project, candidate) else None
+
+
+def _relative(project: Path, path: Path) -> str:
+    return path.resolve().relative_to(project.resolve()).as_posix()
+
+
+def _read_manifest(project: Path) -> dict:
+    path = manifest_path(project)
+    if not path.is_file() or path.is_symlink():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _run_script(script: Path, args: list[str]) -> str:
@@ -111,13 +139,13 @@ def _run_script(script: Path, args: list[str]) -> str:
     return result.stdout
 
 
-def _register_via_merge_scripts(project: Path) -> dict:
-    """Reuse the official BMAD merge scripts (config.yaml + module-help.csv)."""
+def _register(project: Path) -> None:
     base = payload("setup")
-    answers = {"module": {"contracts_dir": "tests/contracts"}}
-    answers_file = project / "_bmad" / MODULE_CODE / "answers.tmp.json"
-    answers_file.parent.mkdir(parents=True, exist_ok=True)
-    answers_file.write_text(json.dumps(answers), encoding="utf-8")
+    answers_path = project / "_bmad" / MODULE_CODE / "answers.tmp.json"
+    answers_path.parent.mkdir(parents=True, exist_ok=True)
+    answers_path.write_text(
+        json.dumps({"module": {"contracts_dir": "tests/contracts"}}), encoding="utf-8"
+    )
     try:
         _run_script(
             base / "scripts" / "merge-config.py",
@@ -129,7 +157,7 @@ def _register_via_merge_scripts(project: Path) -> dict:
                 "--module-yaml",
                 str(base / "assets" / "module.yaml"),
                 "--answers",
-                str(answers_file),
+                str(answers_path),
                 "--legacy-dir",
                 str(project / "_bmad"),
             ],
@@ -138,7 +166,7 @@ def _register_via_merge_scripts(project: Path) -> dict:
             base / "scripts" / "merge-help-csv.py",
             [
                 "--target",
-                str(project / "_bmad" / "module-help.csv"),
+                str(project / "_bmad" / "_config" / "bmad-help.csv"),
                 "--source",
                 str(base / "assets" / "module-help.csv"),
                 "--legacy-dir",
@@ -148,98 +176,134 @@ def _register_via_merge_scripts(project: Path) -> dict:
             ],
         )
     finally:
-        answers_file.unlink(missing_ok=True)
+        answers_path.unlink(missing_ok=True)
 
-    # Register the module in the top-level `modules` list (merge-config does not).
     config = read_config(project)
     modules = config.get("modules")
-    if isinstance(modules, list) and MODULE_CODE not in modules:
-        config["modules"] = modules + [MODULE_CODE]
+    if not isinstance(modules, list):
+        modules = []
+    if MODULE_CODE not in modules:
+        config["modules"] = [*modules, MODULE_CODE]
         write_config(project, config)
-    elif not isinstance(modules, list):
-        config["modules"] = [MODULE_CODE]
-        write_config(project, config)
-    return {}
+
+    implementation_artifacts = config.get(
+        "implementation_artifacts", "_bmad-output/implementation-artifacts"
+    )
+    write_yaml(
+        project / "_bmad" / MODULE_CODE / "config.yaml",
+        {
+            "contracts_dir": "{project-root}/tests/contracts",
+            "implementation_artifacts": (
+                implementation_artifacts
+                if str(implementation_artifacts).startswith("{project-root}")
+                else f"{{project-root}}/{str(implementation_artifacts).lstrip('/')}"
+            ),
+        },
+    )
+
+
+def _install_file(
+    project: Path,
+    rel: str,
+    source: Path,
+    previous_files: dict,
+    report: dict,
+) -> str | None:
+    destination = _project_path(project, rel)
+    if destination is None:
+        raise ValueError(f"bundle destination escapes project: {rel}")
+    previous_hash = previous_files.get(rel)
+    if destination.exists():
+        if not destination.is_file() or destination.is_symlink():
+            report[f"file:{rel}"] = "exists (preserved)"
+            return None
+        if not isinstance(previous_hash, str) or _sha256(destination) != previous_hash:
+            report[f"file:{rel}"] = "exists (preserved)"
+            return None
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    report[f"file:{rel}"] = "refreshed" if previous_hash else "installed"
+    return _sha256(destination)
 
 
 def install(project: Path, skills_dir: Path, force: bool = False) -> dict:
-    """Install (or upgrade) the module payload into ``project``."""
     project = project.resolve()
+    skills_dir = skills_dir.resolve()
+    if not _inside(project, skills_dir):
+        raise ValueError("skills_dir must be inside project")
+
+    previous = _read_manifest(project)
+    previous_files = previous.get("files") if isinstance(previous.get("files"), dict) else {}
+    previous_skills = previous.get("skills") if isinstance(previous.get("skills"), dict) else {}
     report: dict = {}
+    installed_skills: dict[str, dict[str, str]] = {}
 
-    # ── Skills ────────────────────────────────────────────────────────────────
     for name in SKILL_NAMES:
-        src = payload("skills") / name
-        dst = skills_dir / name
-        if not src.is_dir():
-            report[f"skill:{name}"] = "missing in bundle (skipped)"
+        source = payload("skills") / name
+        destination = skills_dir / name
+        prior = previous_skills.get(name)
+        owned = isinstance(prior, dict) and prior.get("path") == _relative(project, destination)
+        if destination.is_symlink():
+            report[f"skill:{name}"] = "exists (preserved)"
             continue
-        if dst.exists() and not force:
+        if destination.exists() and not owned:
+            report[f"skill:{name}"] = "exists (preserved)"
+            continue
+        if destination.exists() and not force:
             report[f"skill:{name}"] = "exists (skipped, use --force to refresh)"
-            continue
-        shutil.copytree(src, dst, dirs_exist_ok=True)
-        report[f"skill:{name}"] = "refreshed" if dst.exists() and force else "installed"
+        else:
+            shutil.copytree(source, destination, dirs_exist_ok=True)
+            report[f"skill:{name}"] = "refreshed" if owned else "installed"
+        installed_skills[name] = {
+            "path": _relative(project, destination),
+            "sha256": _tree_sha256(destination),
+        }
 
-    # ── Single-file installs ──────────────────────────────────────────────────
     installed_files: dict[str, str] = {}
-    for rel, src_rel in FILE_INSTALLS.items():
-        src = payload(src_rel)
-        if not src.is_file():
+    for rel, source_rel in FILE_INSTALLS.items():
+        source = payload(source_rel)
+        if not source.is_file():
             report[f"file:{rel}"] = "missing in bundle (skipped)"
             continue
-        dst = project / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        installed_files[rel] = _sha256(dst)
-        report[f"file:{rel}"] = "installed"
+        digest = _install_file(project, rel, source, previous_files, report)
+        if digest:
+            installed_files[rel] = digest
 
-    # ── bmad-loop profiles (never overwrite project-local profiles) ──────────
-    profiles_dst = project / ".bmad-loop" / "profiles"
     for name in PROFILE_NAMES:
-        src = payload("bmad-loop") / "profiles" / name
-        dst = profiles_dst / name
-        if not src.is_file():
-            continue
-        if dst.exists():
-            report[f"profile:{name}"] = "exists (skipped)"
-            continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        report[f"profile:{name}"] = "installed"
+        rel = (Path(".bmad-loop") / "profiles" / name).as_posix()
+        source = payload("bmad-loop") / "profiles" / name
+        digest = _install_file(project, rel, source, previous_files, report)
+        if digest:
+            installed_files[rel] = digest
 
-    # ── Override templates (never overwrite the project's own overrides) ─────
-    custom_dst = project / "_bmad" / "custom"
+    custom_dir = project / "_bmad" / "custom"
     for name in TEMPLATE_NAMES:
-        src = payload("templates") / "custom" / name
-        dst = custom_dst / name
-        if not src.is_file():
-            continue
-        if dst.exists():
+        source = payload("templates") / "custom" / name
+        destination = custom_dir / name
+        if destination.exists():
             report[f"override:{name}"] = "exists (preserved)"
             continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        report[f"override:{name}"] = "installed"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        report[f"override:{name}"] = "installed (project-owned)"
 
-    # ── Official BMAD registration (config + help) ───────────────────────────
-    _register_via_merge_scripts(project)
-    report["registration"] = "config.yaml + module-help.csv updated"
+    _register(project)
+    report["registration"] = "config.yaml + _config/bmad-help.csv updated"
+    module_config_rel = f"_bmad/{MODULE_CODE}/config.yaml"
+    module_config = project / module_config_rel
+    installed_files[module_config_rel] = _sha256(module_config)
 
-    # ── Manifest for upgrade/uninstall ───────────────────────────────────────
     manifest = {
         "module": MODULE_CODE,
         "name": MODULE_NAME,
-        "version": "0.1.0",
-        "installed_at": "",
-        "skills_dir": str(skills_dir),
+        "version": MODULE_VERSION,
+        "skills": installed_skills,
         "files": installed_files,
-        "profiles": PROFILE_NAMES,
-        "templates": TEMPLATE_NAMES,
     }
-    mp = manifest_path(project)
-    mp.parent.mkdir(parents=True, exist_ok=True)
-    mp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    report["manifest"] = str(mp)
+    path = manifest_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    report["manifest"] = str(path)
     return report
 
 
@@ -251,7 +315,7 @@ def _drop_module_from_config(project: Path) -> bool:
         changed = True
     modules = config.get("modules")
     if isinstance(modules, list) and MODULE_CODE in modules:
-        config["modules"] = [m for m in modules if m != MODULE_CODE]
+        config["modules"] = [module for module in modules if module != MODULE_CODE]
         changed = True
     if changed:
         write_config(project, config)
@@ -262,78 +326,98 @@ def _drop_module_from_help(project: Path) -> bool:
     import csv
     from io import StringIO
 
-    target = project / "_bmad" / "module-help.csv"
+    target = project / "_bmad" / "_config" / "bmad-help.csv"
     if not target.exists():
         return False
     rows = list(csv.reader(StringIO(target.read_text(encoding="utf-8", newline=""))))
     if not rows:
         return False
-    header, data = rows[0], rows[1:]
-    kept = [r for r in data if not (r and r[0].strip() == MODULE_NAME)]
-    if len(kept) == len(data):
+    kept = [row for row in rows[1:] if not (row and row[0].strip() == MODULE_NAME)]
+    if len(kept) == len(rows) - 1:
         return False
-    out = StringIO()
-    writer = csv.writer(out)
-    writer.writerow(header)
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(rows[0])
     writer.writerows(kept)
-    target.write_text(out.getvalue(), encoding="utf-8", newline="")
+    target.write_text(output.getvalue(), encoding="utf-8", newline="")
     return True
 
 
+def _remove_empty_parents(path: Path, project: Path) -> None:
+    parent = path.parent
+    while parent != project and _inside(project, parent):
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
+
+
 def uninstall(project: Path) -> dict:
-    """Remove the module's installed files. User-modified files are preserved."""
     project = project.resolve()
+    manifest = _read_manifest(project)
     report: dict = {}
 
-    mp = manifest_path(project)
-    manifest = json.loads(mp.read_text(encoding="utf-8")) if mp.is_file() else {}
-
-    # Remove single-file installs only if they still match the bundle hash.
-    for rel, expected in (manifest.get("files") or {}).items():
-        dst = project / rel
-        if dst.is_file() and _sha256(dst) == expected:
-            dst.unlink()
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    for rel, expected in files.items():
+        destination = _project_path(project, rel)
+        if destination is None:
+            report[f"invalid:{rel}"] = "ignored (path escapes project)"
+            continue
+        if (
+            destination.is_file()
+            and not destination.is_symlink()
+            and _sha256(destination) == expected
+        ):
+            destination.unlink()
             report[f"removed:{rel}"] = "ok"
-        elif dst.exists():
+            _remove_empty_parents(destination, project)
+        elif destination.exists():
             report[f"removed:{rel}"] = "preserved (modified since install)"
 
-    # Skills dir (only the skill directories we own).
-    skills_dir = Path(manifest.get("skills_dir", ".agents/skills"))
-    if not skills_dir.is_absolute():
-        skills_dir = project / skills_dir
-    for name in SKILL_NAMES:
-        dst = skills_dir / name
-        if dst.is_dir():
-            shutil.rmtree(dst)
+    skills = manifest.get("skills") if isinstance(manifest.get("skills"), dict) else {}
+    for name, metadata in skills.items():
+        raw_path = metadata.get("path") if isinstance(metadata, dict) else None
+        destination = _project_path(project, raw_path) if isinstance(raw_path, str) else None
+        if destination is None:
+            report[f"invalid:skill:{name}"] = "ignored (path escapes project)"
+            continue
+        expected = metadata.get("sha256")
+        if (
+            destination.is_dir()
+            and not destination.is_symlink()
+            and _tree_sha256(destination) == expected
+        ):
+            shutil.rmtree(destination)
             report[f"removed:skill:{name}"] = "ok"
+            _remove_empty_parents(destination, project)
+        elif destination.exists():
+            report[f"removed:skill:{name}"] = "preserved (modified since install)"
 
-    # Module state dir (docs + manifest).
+    path = manifest_path(project)
+    path.unlink(missing_ok=True)
     module_dir = project / "_bmad" / MODULE_CODE
-    if module_dir.is_dir():
-        shutil.rmtree(module_dir)
-        report["removed:_bmad/gherkin-tdd"] = "ok"
+    if module_dir.is_dir() and not module_dir.is_symlink():
+        with suppress(OSError):
+            module_dir.rmdir()
 
-    # Registration cleanup.
     if _drop_module_from_config(project):
         report["config.yaml"] = "gherkin-tdd section removed"
     if _drop_module_from_help(project):
-        report["module-help.csv"] = "gherkin-tdd rows removed"
-
+        report["bmad-help.csv"] = "gherkin-tdd rows removed"
     report["overrides"] = "preserved under _bmad/custom/ (project-owned)"
     return report
 
 
 def status(project: Path) -> dict:
-    mp = manifest_path(project)
-    installed = mp.is_file()
-    if not installed:
+    manifest = _read_manifest(project)
+    if not manifest:
         return {"module": MODULE_CODE, "installed": False}
-    manifest = json.loads(mp.read_text(encoding="utf-8"))
     return {
         "module": MODULE_CODE,
         "name": manifest.get("name"),
         "version": manifest.get("version"),
         "installed": True,
-        "skills_dir": manifest.get("skills_dir"),
+        "skills": len(manifest.get("skills") or {}),
         "files": len(manifest.get("files") or {}),
     }

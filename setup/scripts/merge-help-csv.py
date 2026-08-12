@@ -3,7 +3,7 @@
 # requires-python = ">=3.9"
 # dependencies = []
 # ///
-"""Merge module help entries into shared _bmad/module-help.csv.
+"""Merge module help entries into the current BMAD help catalog.
 
 Reads a source CSV with module help entries and merges them into a target CSV.
 Uses an anti-zombie pattern: all existing rows matching the source module code
@@ -24,19 +24,19 @@ import sys
 from io import StringIO
 from pathlib import Path
 
-# CSV header for module-help.csv
+# Current BMAD help catalog schema.
 HEADER = [
     "module",
-    "skill",
-    "display-name",
-    "menu-code",
-    "description",
-    "action",
-    "args",
     "phase",
-    "after",
-    "before",
+    "name",
+    "code",
+    "sequence",
+    "workflow-file",
+    "command",
     "required",
+    "agent",
+    "options",
+    "description",
     "output-location",
     "outputs",
 ]
@@ -44,12 +44,12 @@ HEADER = [
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Merge module help entries into shared _bmad/module-help.csv with anti-zombie pattern."
+        description="Merge module help entries into _bmad/_config/bmad-help.csv."
     )
     parser.add_argument(
         "--target",
         required=True,
-        help="Path to the target _bmad/module-help.csv file",
+        help="Path to the target _bmad/_config/bmad-help.csv file",
     )
     parser.add_argument(
         "--source",
@@ -128,7 +128,7 @@ def cleanup_legacy_csvs(legacy_dir: str, module_code: str, verbose: bool = False
     Old per-module module-help.csv files — including _bmad/core/module-help.csv — are
     live, manifest-tracked config on BMAD v6, so removing them destroys shared BMAD
     state or desyncs _bmad/_config/files-manifest.csv. The anti-zombie merge into the
-    shared _bmad/module-help.csv already supersedes their entries, so leaving them in
+    shared _bmad/_config/bmad-help.csv already supersedes their entries, so leaving them in
     place is harmless. Kept as a function so callers and the result JSON stay stable.
     """
     if verbose:
@@ -193,8 +193,14 @@ def main():
         if target_existed:
             print(f"Existing target rows: {len(target_rows)}", file=sys.stderr)
 
-    # Use source header if target doesn't exist or has no header
     header = target_header if target_header else (source_header if source_header else HEADER)
+    if header != HEADER or source_header != HEADER:
+        print(
+            f"Error: unsupported help catalog schema; expected {HEADER!r}, "
+            f"target={header!r}, source={source_header!r}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Anti-zombie: remove all rows for each source module code
     filtered_rows = target_rows

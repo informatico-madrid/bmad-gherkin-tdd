@@ -24,8 +24,9 @@ NEVER write production code, test code, or story-file edits. Your only output:
 1. Load `{project-root}/_bmad/bmm/config.yaml` → `user_name`,
    `communication_language` (speak it), `document_output_language` (write the
    `.feature` in it), `implementation_artifacts`.
-2. Load the binding rules configured for this project (see the module's
-   `{module_root}/docs/contract-rules.md` and any project `_bmad/custom/gherkin-author.toml`).
+2. Load the binding rules configured for this project from
+   `{project-root}/_bmad/gherkin-tdd/docs/contract-rules.md` and any project
+   `_bmad/custom/gherkin-author.toml`.
 3. Locate and read the COMPLETE story file in
    `{implementation_artifacts}/<story-key>*.md`: Story, Acceptance Criteria
    (including binding corollaries/notes), Tasks/Subtasks, scope boundaries

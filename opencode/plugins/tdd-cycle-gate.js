@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 const PATCH_PATH_RE = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm;
 
@@ -66,7 +66,7 @@ function runPythonGate(directory, event, mapped, toolResponse = null) {
   // Default: project-relative "hooks/tdd_cycle_gate.py".
   const configured = process.env.BMAD_TDD_GATE_PATH;
   const gate = configured
-    ? join(directory, configured)
+    ? (isAbsolute(configured) ? configured : join(directory, configured))
     : join(directory, "hooks", "tdd_cycle_gate.py");
   const payload = {
     hook_event_name: event,

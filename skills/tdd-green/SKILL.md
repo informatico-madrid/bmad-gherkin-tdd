@@ -42,7 +42,7 @@ description: TDD GREEN Phase make test pass with standards.md. Use when implemen
 - Escritura de tests (eso es RED)
 - Refactorización (eso es REFACTOR — aquí se permite código feo)
 - Ejecución de mutmut (eso es REFACTOR)
-- Modificación del contrato Gherkin (solo el humano firma)
+- Modificación del contrato Gherkin (la firma la gestiona gherkin-author o el coordinator en loop_auto)
 - Decisiones de arquitectura (eso lo hace architect-review)
 - No ejecutes `tdd-red`, `tdd-clean` ni `tdd-refactor` desde aquí — el coordinador orquesta la secuencia
 

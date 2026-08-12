@@ -158,6 +158,8 @@ def test_resolved_workflow_has_tdd_delegation_gates(project: Path) -> None:
     steps = "\n".join(wf.get("workflow", {}).get("activation_steps_append", []) or [])
     for gate in ("TDD DELEGATION GATE", "TDD SUBAGENT TYPES GATE", "CLOSURE GATE"):
         assert gate in steps, f"missing gate {gate}"
+    assert "RED -> GREEN -> CLEAN -> REFACTOR" in steps
+    assert "durable four-phase bitacora" in steps
 
 
 def test_handoff_returns_to_outer_workflow_in_order(project: Path) -> None:
