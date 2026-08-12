@@ -27,6 +27,60 @@ def test_auto_discovered_plugin_exports_only_factory() -> None:
     assert _node(script) == ["TddCycleGate"]
 
 
+def test_gate_result_policy_preserves_interactive_fail_open_and_loop_fail_closed() -> None:
+    script = f"""
+      import {{ TddCycleGate }} from {json.dumps(PLUGIN.as_uri())};
+      const {{ shouldDenyGateResult }} = TddCycleGate;
+      const results = [
+        {{ status: 0, signal: null, error: null }},
+        {{ status: 2, signal: null, error: null }},
+        {{ status: 1, signal: null, error: null }},
+        {{ status: null, signal: null, error: null }},
+        {{ status: null, signal: "SIGTERM", error: null }},
+        {{ status: null, signal: null, error: new Error("spawn failed") }},
+      ];
+      console.log(JSON.stringify({{
+        interactive: results.map((result) => shouldDenyGateResult(result, false)),
+        loop: results.map((result) => shouldDenyGateResult(result, true)),
+      }}));
+    """
+    assert _node(script) == {
+        "interactive": [False, True, False, False, False, False],
+        "loop": [False, True, True, True, True, True],
+    }
+
+
+def test_broken_python_gate_denies_only_in_loop_mode(tmp_path: Path) -> None:
+    broken_gate = tmp_path / "broken-gate.py"
+    broken_gate.write_text("this is invalid python !!!\n", encoding="utf-8")
+    script = f"""
+      import {{ TddCycleGate }} from {json.dumps(PLUGIN.as_uri())};
+      process.env.BMAD_TDD_GATE_PATH = {json.dumps(str(broken_gate))};
+      const hooks = await TddCycleGate({{ directory: {json.dumps(str(tmp_path))} }});
+      const invoke = async (loopMode) => {{
+        if (loopMode) process.env.BMAD_LOOP_MODE = "1";
+        else delete process.env.BMAD_LOOP_MODE;
+        try {{
+          await hooks["tool.execute.before"](
+            {{ tool: "bash" }},
+            {{ args: {{ command: "git status" }} }},
+          );
+          return "allowed";
+        }} catch (error) {{
+          return error.message;
+        }}
+      }};
+      console.log(JSON.stringify({{
+        interactive: await invoke(false),
+        loop: await invoke(true),
+      }}));
+    """
+    result = _node(script)
+    assert isinstance(result, dict)
+    assert result["interactive"] == "allowed"
+    assert "SyntaxError: invalid syntax" in result["loop"]
+
+
 def test_absolute_gate_path_is_not_joined_to_project(tmp_path: Path) -> None:
     gate = tmp_path / "external" / "gate.py"
     gate.parent.mkdir()

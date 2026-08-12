@@ -61,6 +61,13 @@ function mapToolInput(tool, args) {
   return null;
 }
 
+function shouldDenyGateResult(result, loopMode) {
+  if (result.status === 2) return true;
+  return Boolean(
+    loopMode && (result.error || result.signal || result.status !== 0),
+  );
+}
+
 function runPythonGate(directory, event, mapped, toolResponse = null) {
   // Gate path is configurable via BMAD_TDD_GATE_PATH (absolute or repo-relative).
   // Default: project-relative "hooks/tdd_cycle_gate.py".
@@ -80,8 +87,10 @@ function runPythonGate(directory, event, mapped, toolResponse = null) {
     input: JSON.stringify(payload),
     timeout: 5000,
   });
-  if (result.status === 2) {
-    throw new Error((result.stderr || result.stdout).trim() || "TDD gate denied the tool call");
+  const loopMode = process.env.BMAD_LOOP_MODE === "1";
+  if (shouldDenyGateResult(result, loopMode)) {
+    const detail = result.stderr || result.stdout || result.error?.message || "";
+    throw new Error(detail.trim() || "TDD gate unavailable; failed closed in loop mode");
   }
   return {
     status: result.status,
@@ -105,4 +114,5 @@ const createTddCycleGate = async ({ directory }) => ({
 export const TddCycleGate = Object.assign(createTddCycleGate, {
   mapToolInput,
   parsePatchInput,
+  shouldDenyGateResult,
 });
