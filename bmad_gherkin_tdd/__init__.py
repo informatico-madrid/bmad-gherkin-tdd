@@ -7,7 +7,7 @@ The module is primarily a skills/config bundle plus an installer CLI:
 Run ``bmad-gherkin-tdd --help`` for the full surface.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 from . import cli  # noqa: E402,F401  (re-export so `python -m bmad_gherkin_tdd` works)
 

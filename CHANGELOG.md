@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-12
+
+### Fixed
+- The OpenCode bridge now preserves interactive fail-open behavior while failing closed
+  on gate crashes, signals and timeouts during autonomous `bmad-loop` runs.
+- Installer transactions roll back newly written assets when registration fails.
+- Reinstalls preserve user-modified skill ownership correctly, while exact bundled
+  assets left by older interrupted installs can be adopted safely.
+- Critical installer output paths reject symlink traversal before writing.
+- `status` now reports missing and modified managed assets instead of trusting the
+  manifest alone.
+- CLEAN reports invalid Python as a structured JSON failure instead of emitting a
+  traceback.
+
 ## [0.1.1] - 2026-08-12
 
 ### Documentation
@@ -49,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - bmad-loop dev profile no longer bypasses `bmad-dev-auto` by invoking the coordinator
   directly.
 
-[Unreleased]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/informatico-madrid/bmad-gherkin-tdd/releases/tag/v0.1.0

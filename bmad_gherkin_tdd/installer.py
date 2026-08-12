@@ -7,12 +7,13 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 from contextlib import suppress
 from pathlib import Path
 
 MODULE_CODE = "gherkin-tdd"
 MODULE_NAME = "BMAD Gherkin TDD"
-MODULE_VERSION = "0.1.1"
+MODULE_VERSION = "0.1.2"
 
 SKILL_NAMES = (
     "gherkin-author",
@@ -111,6 +112,69 @@ def _project_path(project: Path, value: str) -> Path | None:
 
 def _relative(project: Path, path: Path) -> str:
     return path.resolve().relative_to(project.resolve()).as_posix()
+
+
+def _require_safe_managed_path(project: Path, path: Path) -> None:
+    project = project.resolve()
+    try:
+        relative = path.absolute().relative_to(project)
+    except ValueError as exc:
+        raise ValueError(f"unsafe managed path outside project: {path}") from exc
+    current = project
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            raise ValueError(f"unsafe managed path contains symlink: {current}")
+
+
+def _transaction_paths(project: Path, skills_dir: Path) -> list[Path]:
+    module_dir = project / "_bmad" / MODULE_CODE
+    paths = [
+        *(skills_dir / name for name in SKILL_NAMES),
+        *(project / rel for rel in FILE_INSTALLS if not (project / rel).is_relative_to(module_dir)),
+        *(project / ".bmad-loop" / "profiles" / name for name in PROFILE_NAMES),
+        *(project / "_bmad" / "custom" / name for name in TEMPLATE_NAMES),
+        project / "_bmad" / "config.yaml",
+        project / "_bmad" / "config.user.yaml",
+        project / "_bmad" / "_config" / "bmad-help.csv",
+        module_dir,
+    ]
+    return list(dict.fromkeys(paths))
+
+
+def _snapshot_paths(paths: list[Path], backup_root: Path) -> list[tuple[Path, Path | None]]:
+    snapshots: list[tuple[Path, Path | None]] = []
+    for index, path in enumerate(paths):
+        if not path.exists() and not path.is_symlink():
+            snapshots.append((path, None))
+            continue
+        backup = backup_root / str(index)
+        if path.is_symlink():
+            backup.symlink_to(path.readlink(), target_is_directory=path.is_dir())
+        elif path.is_dir():
+            shutil.copytree(path, backup, symlinks=True)
+        else:
+            shutil.copy2(path, backup)
+        snapshots.append((path, backup))
+    return snapshots
+
+
+def _restore_paths(snapshots: list[tuple[Path, Path | None]], project: Path) -> None:
+    for path, backup in reversed(snapshots):
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+        if backup is None:
+            _remove_empty_parents(path, project)
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if backup.is_symlink():
+            path.symlink_to(backup.readlink(), target_is_directory=backup.is_dir())
+        elif backup.is_dir():
+            shutil.copytree(backup, path, symlinks=True)
+        else:
+            shutil.copy2(backup, path)
 
 
 def _read_manifest(project: Path) -> dict:
@@ -217,7 +281,14 @@ def _install_file(
         if not destination.is_file() or destination.is_symlink():
             report[f"file:{rel}"] = "exists (preserved)"
             return None
-        if not isinstance(previous_hash, str) or _sha256(destination) != previous_hash:
+        current_hash = _sha256(destination)
+        if not isinstance(previous_hash, str):
+            if current_hash == _sha256(source):
+                report[f"file:{rel}"] = "adopted (matches bundle)"
+                return current_hash
+            report[f"file:{rel}"] = "exists (preserved)"
+            return None
+        if current_hash != previous_hash:
             report[f"file:{rel}"] = "exists (preserved)"
             return None
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -226,7 +297,7 @@ def _install_file(
     return _sha256(destination)
 
 
-def install(project: Path, skills_dir: Path, force: bool = False) -> dict:
+def _install_impl(project: Path, skills_dir: Path, force: bool = False) -> dict:
     project = project.resolve()
     skills_dir = skills_dir.resolve()
     if not _inside(project, skills_dir):
@@ -246,10 +317,18 @@ def install(project: Path, skills_dir: Path, force: bool = False) -> dict:
         if destination.is_symlink():
             report[f"skill:{name}"] = "exists (preserved)"
             continue
+        source_hash = _tree_sha256(source)
         if destination.exists() and not owned:
-            report[f"skill:{name}"] = "exists (preserved)"
-            continue
-        if destination.exists() and not force:
+            if _tree_sha256(destination) != source_hash:
+                report[f"skill:{name}"] = "exists (preserved)"
+                continue
+            report[f"skill:{name}"] = "adopted (matches bundle)"
+        elif destination.exists() and not force:
+            prior_hash = prior.get("sha256") if isinstance(prior, dict) else None
+            if _tree_sha256(destination) != prior_hash:
+                report[f"skill:{name}"] = "exists (preserved)"
+                installed_skills[name] = dict(prior)
+                continue
             report[f"skill:{name}"] = "exists (skipped, use --force to refresh)"
         else:
             shutil.copytree(source, destination, dirs_exist_ok=True)
@@ -305,6 +384,31 @@ def install(project: Path, skills_dir: Path, force: bool = False) -> dict:
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     report["manifest"] = str(path)
     return report
+
+
+def install(project: Path, skills_dir: Path, force: bool = False) -> dict:
+    project = project.resolve()
+    skills_dir = skills_dir.resolve()
+    if not _inside(project, skills_dir):
+        raise ValueError("skills_dir must be inside project")
+    managed_paths = _transaction_paths(project, skills_dir)
+    module_dir = project / "_bmad" / MODULE_CODE
+    for path in managed_paths:
+        _require_safe_managed_path(project, path.parent)
+    direct_writes = [
+        module_dir / "answers.tmp.json",
+        module_dir / "config.yaml",
+        module_dir / "install.json",
+    ]
+    for path in direct_writes:
+        _require_safe_managed_path(project, path)
+    with tempfile.TemporaryDirectory(prefix="bmad-gherkin-tdd-") as temporary:
+        snapshots = _snapshot_paths(managed_paths, Path(temporary))
+        try:
+            return _install_impl(project, skills_dir, force)
+        except Exception:
+            _restore_paths(snapshots, project)
+            raise
 
 
 def _drop_module_from_config(project: Path) -> bool:
@@ -415,11 +519,31 @@ def status(project: Path) -> dict:
     manifest = _read_manifest(project)
     if not manifest:
         return {"module": MODULE_CODE, "installed": False}
+    missing: list[str] = []
+    modified: list[str] = []
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    for rel, expected in files.items():
+        destination = _project_path(project, rel)
+        if destination is None or not destination.is_file() or destination.is_symlink():
+            missing.append(rel)
+        elif _sha256(destination) != expected:
+            modified.append(rel)
+    skills = manifest.get("skills") if isinstance(manifest.get("skills"), dict) else {}
+    for name, metadata in skills.items():
+        raw_path = metadata.get("path") if isinstance(metadata, dict) else None
+        destination = _project_path(project, raw_path) if isinstance(raw_path, str) else None
+        if destination is None or not destination.is_dir() or destination.is_symlink():
+            missing.append(f"skill:{name}")
+        elif _tree_sha256(destination) != metadata.get("sha256"):
+            modified.append(f"skill:{name}")
     return {
         "module": MODULE_CODE,
         "name": manifest.get("name"),
         "version": manifest.get("version"),
         "installed": True,
-        "skills": len(manifest.get("skills") or {}),
-        "files": len(manifest.get("files") or {}),
+        "healthy": not missing and not modified,
+        "missing": sorted(missing),
+        "modified": sorted(modified),
+        "skills": len(skills),
+        "files": len(files),
     }

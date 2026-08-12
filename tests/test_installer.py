@@ -9,6 +9,7 @@ the project's `_bmad/custom/` overrides.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -81,6 +82,18 @@ def test_reinstall_is_idempotent_and_upgradeable(project: Path) -> None:
     assert "project-local customization" not in marker.read_text(encoding="utf-8")
 
 
+def test_reinstall_then_uninstall_preserves_modified_skill(project: Path) -> None:
+    skills_dir = project / ".agents" / "skills"
+    installer.install(project, skills_dir)
+    marker = skills_dir / "tdd-red" / "SKILL.md"
+    marker.write_text("# user-owned change\n", encoding="utf-8")
+
+    installer.install(project, skills_dir)
+    installer.uninstall(project)
+
+    assert marker.read_text(encoding="utf-8") == "# user-owned change\n"
+
+
 def test_uninstall_removes_and_preserves(project: Path) -> None:
     installer.install(project, project / ".agents" / "skills")
 
@@ -111,7 +124,7 @@ def test_status_reflects_install(project: Path) -> None:
     installer.install(project, project / ".agents" / "skills")
     st = installer.status(project)
     assert st["installed"] is True
-    assert st["version"] == "0.1.1"
+    assert st["version"] == "0.1.2"
     assert installer.manifest_path(project).is_file()
 
 
@@ -186,6 +199,88 @@ def test_force_install_preserves_symlinked_skill(project: Path, tmp_path: Path) 
     assert marker.read_text(encoding="utf-8") == "# external skill\n"
     assert report["skill:tdd-red"] == "exists (preserved)"
     assert "tdd-red" not in manifest["skills"]
+
+
+def test_install_rejects_symlinked_manifest(project: Path, tmp_path: Path) -> None:
+    external = tmp_path.parent / f"{tmp_path.name}-external-manifest.json"
+    external.write_text("keep\n", encoding="utf-8")
+    manifest = installer.manifest_path(project)
+    manifest.parent.mkdir(parents=True)
+    manifest.symlink_to(external)
+
+    with pytest.raises(ValueError, match="unsafe managed path"):
+        installer.install(project, project / ".agents" / "skills")
+
+    assert external.read_text(encoding="utf-8") == "keep\n"
+
+
+def test_install_rejects_symlinked_asset_parent(project: Path, tmp_path: Path) -> None:
+    external = tmp_path.parent / f"{tmp_path.name}-external-hooks"
+    external.mkdir()
+    (project / "hooks").symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="unsafe managed path"):
+        installer.install(project, project / ".agents" / "skills")
+
+    assert list(external.iterdir()) == []
+
+
+def test_failed_install_rolls_back_new_assets(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_registration(_: Path) -> None:
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(installer, "_register", fail_registration)
+
+    with pytest.raises(RuntimeError, match="registration failed"):
+        installer.install(project, project / ".agents" / "skills")
+
+    assert not (project / "hooks" / "tdd_cycle_gate.py").exists()
+    assert not (project / ".agents" / "skills" / "tdd-red").exists()
+    assert not installer.manifest_path(project).exists()
+
+
+def test_retry_adopts_identical_assets_left_by_interrupted_install(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_register = installer._register
+    monkeypatch.setattr(
+        installer,
+        "_register",
+        lambda _: (_ for _ in ()).throw(RuntimeError("registration failed")),
+    )
+    with pytest.raises(RuntimeError):
+        installer.install(project, project / ".agents" / "skills")
+
+    # Simulate assets from an older non-transactional installer run.
+    skill = project / ".agents" / "skills" / "tdd-red"
+    skill.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(installer.payload("skills") / "tdd-red", skill)
+    hook = project / "hooks" / "tdd_cycle_gate.py"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(installer.payload("hooks") / "tdd_cycle_gate.py", hook)
+
+    monkeypatch.setattr(installer, "_register", real_register)
+    installer.install(project, project / ".agents" / "skills")
+    manifest = json.loads(installer.manifest_path(project).read_text(encoding="utf-8"))
+
+    assert "tdd-red" in manifest["skills"]
+    assert "hooks/tdd_cycle_gate.py" in manifest["files"]
+
+
+def test_status_reports_missing_and_modified_assets(project: Path) -> None:
+    installer.install(project, project / ".agents" / "skills")
+    (project / "hooks" / "tdd_cycle_gate.py").unlink()
+    skill = project / ".agents" / "skills" / "tdd-red" / "SKILL.md"
+    skill.write_text("# modified\n", encoding="utf-8")
+
+    status = installer.status(project)
+
+    assert status["installed"] is True
+    assert status["healthy"] is False
+    assert status["missing"] == ["hooks/tdd_cycle_gate.py"]
+    assert status["modified"] == ["skill:tdd-red"]
 
 
 def test_install_writes_current_bmad_module_config(project: Path) -> None:

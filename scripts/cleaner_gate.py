@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import sys
 from pathlib import Path
@@ -21,6 +22,38 @@ def main() -> int:
         path.resolve().relative_to(root) if path.resolve().is_relative_to(root) else path
         for path in files
     ]
+    parse_errors = []
+    for path in files:
+        try:
+            ast.parse(path.read_text(encoding="utf-8"), str(path))
+        except (SyntaxError, UnicodeDecodeError) as error:
+            parse_errors.append(
+                {
+                    "file": str(path),
+                    "lineno": getattr(error, "lineno", None),
+                    "offset": getattr(error, "offset", None),
+                    "error": getattr(error, "msg", str(error)),
+                }
+            )
+    if parse_errors:
+        print(
+            json.dumps(
+                {
+                    "overall": "FAIL",
+                    "failed_checks": 1,
+                    "checks": {
+                        "parse": {
+                            "status": "FAIL",
+                            "violations": len(parse_errors),
+                            "details": parse_errors,
+                        }
+                    },
+                    "scoped_files": len(files),
+                },
+                indent=2,
+            )
+        )
+        return 1
     checks = {
         "kiss": check_kiss(files),
         "dry": check_dry(files),

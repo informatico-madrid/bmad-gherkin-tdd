@@ -1,7 +1,7 @@
 code: gherkin-tdd
 name: BMAD Gherkin TDD
 description: "Contract-first TDD development methodology: signed Gherkin dev-contracts (@s1..@sn), a strict RED→GREEN→CLEAN→REFACTOR coordinator, durable per-scenario bitácora, and integration with bmad-loop. Installs the gherkin-author, bmad-tdd-coordinator, tdd-red/green/clean/refactor skills and wires the bmad-dev-auto handoff to the coordinator."
-module_version: 0.1.1
+module_version: 0.1.2
 default_selected: false
 module_greeting: >
   BMAD Gherkin TDD installed — contract-first TDD development methodology.

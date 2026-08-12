@@ -61,3 +61,40 @@ def test_cleaner_reports_yagni_details_for_exact_file_scope(tmp_path: Path) -> N
         "violations": 1,
         "details": [{"module": "os", "alias": "os", "lineno": 1, "file": "src/sample.py"}],
     }
+
+
+def test_cleaner_reports_invalid_python_as_structured_failure(tmp_path: Path) -> None:
+    cleaner = _copy_tools(tmp_path)
+    source = tmp_path / "src" / "broken.py"
+    source.parent.mkdir()
+    source.write_text("def broken(:\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(cleaner), str(source)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == ""
+    assert json.loads(result.stdout) == {
+        "overall": "FAIL",
+        "failed_checks": 1,
+        "checks": {
+            "parse": {
+                "status": "FAIL",
+                "violations": 1,
+                "details": [
+                    {
+                        "file": "src/broken.py",
+                        "lineno": 1,
+                        "offset": 12,
+                        "error": "invalid syntax",
+                    }
+                ],
+            }
+        },
+        "scoped_files": 1,
+    }
