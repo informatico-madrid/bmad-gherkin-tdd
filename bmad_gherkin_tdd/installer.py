@@ -329,7 +329,8 @@ def _drop_module_from_help(project: Path) -> bool:
     target = project / "_bmad" / "_config" / "bmad-help.csv"
     if not target.exists():
         return False
-    rows = list(csv.reader(StringIO(target.read_text(encoding="utf-8", newline=""))))
+    with target.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.reader(handle))
     if not rows:
         return False
     kept = [row for row in rows[1:] if not (row and row[0].strip() == MODULE_NAME)]
@@ -339,7 +340,8 @@ def _drop_module_from_help(project: Path) -> bool:
     writer = csv.writer(output)
     writer.writerow(rows[0])
     writer.writerows(kept)
-    target.write_text(output.getvalue(), encoding="utf-8", newline="")
+    with target.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(output.getvalue())
     return True
 
 
