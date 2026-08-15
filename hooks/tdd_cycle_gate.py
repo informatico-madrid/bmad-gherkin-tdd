@@ -204,6 +204,10 @@ class State:
     # when a FAIL is observed or the cycle closes. A pytest PASS while
     # red_pending is True is a protocol violation → RED_VIOLATION.
     red_pending: bool = False
+    # Set when a test file is edited while a RED is pending. RED_VIOLATION only
+    # fires if this is True, so a passing *baseline* pytest run before any RED
+    # test exists is not misread as a passing RED (false-trigger guard).
+    red_test_written: bool = False
     # Internal: track which file was loaded from, for save().
     _state_file: Path = field(default=_STATE_FILE, repr=False)
 
@@ -222,6 +226,7 @@ class State:
                 "last_skill_at",
                 "phase_agent_seen",
                 "red_pending",
+                "red_test_written",
             )
             known = {k: data[k] for k in fields if k in data}
             obj = cls(**known)
@@ -618,8 +623,24 @@ def handle_pre_tool_use(tool_name: str, tool_input: dict, state: State) -> None:
     sys.exit(0)
 
 
+def _is_gate_reset_command(command: str) -> bool:
+    """True if the command invokes the TDD gate's own CLI ``reset``.
+
+    This is the autonomous recovery hatch: it must be allowed even in
+    RED_VIOLATION, otherwise a (possibly false) violation deadlocks the run —
+    the reset needed to escape is itself blocked.
+    """
+    return bool(re.search(r"tdd_cycle_gate\.py\s+reset\b", command))
+
+
 def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: State) -> None:
     """Loop-mode PreToolUse handler: observes skills, blocks bash writes, enforces cycle."""
+    # Recovery hatch: the gate's own reset CLI is always allowed (even in
+    # RED_VIOLATION) so a false or genuine violation can be recovered
+    # autonomously instead of deadlocking the run.
+    if tool_name == "Bash" and _is_gate_reset_command(str(tool_input.get("command", ""))):
+        sys.exit(0)
+
     if state.phase == RED_VIOLATION:
         _deny(
             "🚫 RED_VIOLATION: un test pasó durante la fase RED cuando debía fallar "
@@ -888,16 +909,24 @@ def handle_post_tool_use(
         if outcome == "red" and state.phase == READY:
             state.phase = RED_SEEN
             state.red_pending = False
+            state.red_test_written = False
             changed = True
         elif outcome == "green" and state.phase == CODING:
             state.phase = GREEN_SEEN
             state.red_pending = False
+            state.red_test_written = False
             changed = True
-        elif outcome == "green" and state.phase == READY and _is_loop_mode() and state.red_pending:
+        elif (
+            outcome == "green"
+            and state.phase == READY
+            and _is_loop_mode()
+            and state.red_pending
+            and state.red_test_written
+        ):
             # Protocol violation: a development RED passed instead of failing.
             state.phase = RED_VIOLATION
             changed = True
-            _audit("RED_VIOLATION: pytest PASS during RED phase in READY")
+            _audit("RED_VIOLATION: pytest PASS during RED phase in READY (RED test was written)")
     elif tool_name in ("Edit", "Write", "MultiEdit"):
         paths = _target_paths(tool_input)
         if _is_loop_mode():
@@ -908,6 +937,8 @@ def handle_post_tool_use(
             changed = _handle_loop_post_tool_use(paths, tool_input, state)
         else:
             changed = _handle_legacy_post_tool_use(paths, tool_input, state)
+    elif tool_name == "Task" and _is_loop_mode():
+        changed = _handle_task_post_tool_use(tool_input, state)
     if changed:
         state.save()
     sys.exit(0)
@@ -916,6 +947,12 @@ def handle_post_tool_use(
 def _handle_loop_post_tool_use(paths: list[str], tool_input: dict, state: State) -> bool:
     """Loop-mode PostToolUse: story bitácora transitions require matching skill."""
     changed = False
+    # Track RED test authorship: a test-file edit while a RED is pending marks the
+    # RED test as written. RED_VIOLATION then only fires on a passing pytest once a
+    # real RED test exists — a pre-test baseline run can no longer false-trigger it.
+    if state.red_pending and not state.red_test_written and _classify(paths) == "test":
+        state.red_test_written = True
+        changed = True
     if any(_is_story_md(p) for p in paths):
         body = _edit_body(tool_input)
         tokens = _parse_bitacora_tokens(body)
@@ -938,9 +975,100 @@ def _handle_loop_post_tool_use(paths: list[str], tool_input: dict, state: State)
             state.phase = READY
             state.cycle += 1
             state.red_pending = False
+            state.red_test_written = False
             changed = True
             _audit("WARNING: REFACTOR→READY transition (out-of-order bitácora check)")
     return changed
+
+
+def _handle_task_post_tool_use(tool_input: dict, state: State) -> bool:
+    """Loop-mode PostToolUse for Task completion: advance gate when TDD phase subagents finish.
+
+    opencode ``task()`` runs subagent sessions (tdd-red-ornith, tdd-green-ornith, etc.)
+    in a fresh session that does NOT inherit the project's ``.opencode/plugins/``.
+    Consequently, the subagent's internal tool calls (Skill, Edit, Bash) do NOT
+    trigger the Python gate, so bitácora tokens written by the subagent never advance
+    the state machine on their own.
+
+    This fix bridges the gap: when the Task completes in the COORDINATOR's session,
+    the PostToolUse fires here and advances the gate to the state the subagent
+    should have reached.
+
+    Architecture note: the subagent session may load the project hooks
+    (edit/write/bash covered) but NOT the JS plugin that maps ``skill``/``task``
+    to the Python gate. Without it the ``skill_seen`` array never gets populated
+    in the subagent's session, and ``_handle_loop_post_tool_use`` requires
+    ``skill_seen`` to validate transitions. The PostToolUse for Task bypasses
+    this gap entirely.
+    """
+    subagent_type = (tool_input.get("subagent_type", "") or "").strip().lower()
+    _TASK_AGENT_PHASE = {
+        "tdd-red-ornith": READY,
+        "tdd-green-ornith": CODING,
+        "tdd-clean-ornith": CLEAN,
+        "tdd-refactor-ornith": REFACTOR,
+    }
+    if subagent_type not in _TASK_AGENT_PHASE:
+        return False  # non-TDD task → no transition
+
+    # Ensure phase_agent_seen records this agent (paranoid: the PreToolUse
+    # Task handler should have done this, but subagent isolation means the
+    # PreToolUse might use a different state-file scope).
+    if subagent_type not in state.phase_agent_seen:
+        state.phase_agent_seen.append(subagent_type)
+
+    if subagent_type == "tdd-red-ornith":
+        # RED subagent: READY → RED_SEEN → CODING
+        # The subagent wrote the test, ran pytest (FAIL), and wrote ROJO:
+        if state.phase == READY:
+            state.phase = RED_SEEN
+        if state.phase == RED_SEEN:
+            # The subagent wrote ROJO: — but the hook didn't fire in its session,
+            # so we advance here. Even if the subagent's own hooks DID fire,
+            # this is idempotent (phase already CODING → no-op due to if/elif).
+            state.phase = CODING
+        state.red_pending = False
+        state.red_test_written = False
+        if "tdd-red" not in state.skill_seen:
+            state.skill_seen.append("tdd-red")
+        _audit(f"TASK_POST: tdd-red-ornith completed → phase={state.phase}")
+        return True
+
+    elif subagent_type == "tdd-green-ornith":
+        # GREEN subagent: CODING → GREEN_SEEN → CLEAN
+        if state.phase == CODING:
+            state.phase = GREEN_SEEN
+        if state.phase == GREEN_SEEN:
+            state.phase = CLEAN
+        if "tdd-green" not in state.skill_seen:
+            state.skill_seen.append("tdd-green")
+        _audit(f"TASK_POST: tdd-green-ornith completed → phase={state.phase}")
+        return True
+
+    elif subagent_type == "tdd-clean-ornith":
+        # CLEAN subagent: CLEAN → REFACTOR
+        if state.phase == CLEAN:
+            state.phase = REFACTOR
+        if "tdd-clean" not in state.skill_seen:
+            state.skill_seen.append("tdd-clean")
+        _audit(f"TASK_POST: tdd-clean-ornith completed → phase={state.phase}")
+        return True
+
+    elif subagent_type == "tdd-refactor-ornith":
+        # REFACTOR subagent: REFACTOR → READY (cycle closed)
+        if state.phase == REFACTOR:
+            state.phase = READY
+            state.cycle += 1
+            state.red_pending = False
+        if "tdd-refactor" not in state.skill_seen:
+            state.skill_seen.append("tdd-refactor")
+        _audit(
+            "TASK_POST: tdd-refactor-ornith completed → "
+            f"phase={state.phase}, cycle={state.cycle}"
+        )
+        return True
+
+    return False
 
 
 def _handle_legacy_post_tool_use(paths: list[str], tool_input: dict, state: State) -> bool:

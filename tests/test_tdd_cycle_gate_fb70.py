@@ -117,6 +117,35 @@ def _pytest_outcome(outcome: str, stdout: str = "") -> dict:
     }
 
 
+def _edit_test_file() -> dict:
+    """PostToolUse Edit of a tests/** file — marks the RED test as written."""
+    return {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": "tests/unit/test_new_behavior.py",
+            "new_string": "def test_x():\n    assert False",
+        },
+    }
+
+
+def _task_post(agent: str) -> dict:
+    """PostToolUse Task completion — the subagent-session bridge (A0 port)."""
+    return {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Task",
+        "tool_input": {"subagent_type": agent},
+    }
+
+
+def _bash(command: str) -> dict:
+    return {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # A. JS Native MultiEdit aliases  (blocker 2 — tests only in test_opencode_plugins)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2155,12 +2184,14 @@ def test_clean_token_guard_outside_clean_denied(tmp_path: Path) -> None:
 
 
 def test_red_violation_on_pass_in_ready(tmp_path: Path) -> None:
-    """A development RED that PASSES in READY → RED_VIOLATION (loop mode)."""
+    """Genuine violation: a RED test was WRITTEN and then PASSES in READY
+    → RED_VIOLATION (loop mode)."""
     workspace = _setup_workspace(tmp_path)
 
     _run_gate(workspace, _skill("bmad-tdd-coordinator"))
     _run_gate(workspace, _task("tdd-red-ornith"))
     _run_gate(workspace, _skill("tdd-red"))
+    _run_gate(workspace, _edit_test_file())
 
     rc, _, _ = _run_gate(workspace, _pytest_outcome("passed"))
     assert rc == 0
@@ -2176,6 +2207,7 @@ def test_red_violation_denies_subsequent_tools(tmp_path: Path) -> None:
     _run_gate(workspace, _skill("bmad-tdd-coordinator"))
     _run_gate(workspace, _task("tdd-red-ornith"))
     _run_gate(workspace, _skill("tdd-red"))
+    _run_gate(workspace, _edit_test_file())
     _run_gate(workspace, _pytest_outcome("passed"))
 
     # Skill invocation denied
@@ -2209,3 +2241,122 @@ def test_red_violation_not_triggered_without_red_task(tmp_path: Path) -> None:
 
     state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
     assert state["phase"] == "READY"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# P. red_test_written false-trigger guard + autonomous recovery (A0 port, b20c555)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_baseline_pytest_pass_before_red_test_not_violation(tmp_path: Path) -> None:
+    """False-trigger guard: a passing pytest while a RED is pending but NO RED
+    test has been written yet (a baseline verification run) must NOT flip to
+    RED_VIOLATION — the phase stays READY."""
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))  # PreToolUse sets red_pending
+    _run_gate(workspace, _skill("tdd-red"))
+
+    rc, _, _ = _run_gate(workspace, _pytest_outcome("passed"))
+    assert rc == 0
+
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["phase"] == "READY"
+
+
+def test_test_file_edit_while_red_pending_sets_flag(tmp_path: Path) -> None:
+    """Editing a tests/** file while a RED is pending marks the RED test written."""
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))
+    _run_gate(workspace, _skill("tdd-red"))
+
+    _run_gate(workspace, _edit_test_file())
+
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["red_test_written"] is True
+
+
+def test_reset_allowed_in_red_violation(tmp_path: Path) -> None:
+    """Recovery hatch: the gate's own reset CLI must NOT be denied in
+    RED_VIOLATION, otherwise the run deadlocks with no autonomous escape."""
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))
+    _run_gate(workspace, _skill("tdd-red"))
+    _run_gate(workspace, _edit_test_file())
+    _run_gate(workspace, _pytest_outcome("passed"))  # → RED_VIOLATION
+
+    rc, _, _ = _run_gate(workspace, _bash("python3 hooks/tdd_cycle_gate.py reset"))
+    assert rc == 0
+
+
+def test_non_reset_bash_still_denied_in_red_violation(tmp_path: Path) -> None:
+    """The recovery hatch is narrow: ordinary Bash is still denied in RED_VIOLATION."""
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))
+    _run_gate(workspace, _skill("tdd-red"))
+    _run_gate(workspace, _edit_test_file())
+    _run_gate(workspace, _pytest_outcome("passed"))  # → RED_VIOLATION
+
+    rc, _, stderr = _run_gate(workspace, _bash("uv run pytest tests/x.py"))
+    assert rc == 2
+    assert "RED_VIOLATION" in stderr
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Q. Task PostToolUse bridge for subagent session isolation (A0 port, e41770b)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def test_task_post_red_ornith_advances_ready_to_coding(tmp_path: Path) -> None:
+    """Task bridge: PostToolUse tdd-red-ornith advances READY→CODING and records
+    the skill, bridging the isolated subagent session."""
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))  # PreToolUse: red_pending, READY
+
+    rc, _, _ = _run_gate(workspace, _task_post("tdd-red-ornith"))
+    assert rc == 0
+
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["phase"] == "CODING"
+    assert "tdd-red" in state["skill_seen"]
+    assert state["red_pending"] is False
+
+
+def test_task_post_full_cycle_closes_to_ready(tmp_path: Path) -> None:
+    """Task bridge: RED→GREEN→CLEAN→REFACTOR via PostToolUse Tasks closes the cycle."""
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+
+    _run_gate(workspace, _task("tdd-red-ornith"))
+    _run_gate(workspace, _task_post("tdd-red-ornith"))        # → CODING
+    _run_gate(workspace, _task("tdd-green-ornith"))
+    _run_gate(workspace, _task_post("tdd-green-ornith"))      # → CLEAN
+    _run_gate(workspace, _task("tdd-clean-ornith"))
+    _run_gate(workspace, _task_post("tdd-clean-ornith"))      # → REFACTOR
+    _run_gate(workspace, _task("tdd-refactor-ornith"))
+    _run_gate(workspace, _task_post("tdd-refactor-ornith"))   # → READY, cycle+1
+
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["phase"] == "READY"
+    # Module semantics: the coordinator invocation initializes the counter to 1
+    # (_process_loop_skill) and the REFACTOR→READY close increments it to 2.
+    assert state["cycle"] == 2
+    for skill in ("tdd-red", "tdd-green", "tdd-clean", "tdd-refactor"):
+        assert skill in state["skill_seen"]
+
+
+def test_task_post_non_tdd_task_ignored(tmp_path: Path) -> None:
+    """Task bridge: a non-TDD Task completion causes no state transition."""
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+
+    rc, _, _ = _run_gate(workspace, _task_post("some-other-agent"))
+    assert rc == 0
+
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["phase"] == "READY"
+    assert state["skill_seen"] == ["bmad-tdd-coordinator"]

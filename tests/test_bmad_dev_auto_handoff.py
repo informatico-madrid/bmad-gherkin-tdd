@@ -162,6 +162,22 @@ def test_resolved_workflow_has_tdd_delegation_gates(project: Path) -> None:
     assert "durable four-phase bitacora" in steps
 
 
+def test_resolved_workflow_has_scope_split_gate(project: Path) -> None:
+    """The append steps must carry the SCOPE SPLIT GATE so an oversized or
+    multi-goal intent HALTs for a split instead of burning the attempt.
+
+    Regression guard for observation #40 (warning-only `oversized` let a dev
+    continue to timeout). The gate must convert the warning into a blocking
+    transition with the exact condition `story split required`.
+    """
+    wf = _resolved_workflow(project)
+    steps = "\n".join(wf.get("workflow", {}).get("activation_steps_append", []) or [])
+    assert "SCOPE SPLIT GATE" in steps, "missing SCOPE SPLIT GATE"
+    assert "story split required" in steps, "missing blocking condition `story split required`"
+    assert "blocked" in steps, "gate must HALT with status blocked"
+    assert "ready-for-dev" in steps, "gate must HALT before ready-for-dev"
+
+
 def test_handoff_returns_to_outer_workflow_in_order(project: Path) -> None:
     """The TDD subflow must return to the real outer Verify→Review path."""
     handoff = _resolved_handoff(project)

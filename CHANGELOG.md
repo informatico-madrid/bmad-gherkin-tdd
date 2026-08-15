@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `bmad-dev-auto` override template ships a SCOPE SPLIT GATE: an oversized or
+  multi-goal intent now HALTs with blocking condition `story split required`
+  instead of continuing on a warning-only signal.
+- The four TDD phase subagents in the OpenCode agent template deny the
+  interactive `question` tool, so an unattended phase subagent fails fast
+  instead of deadlocking on a prompt no human can answer.
+
+### Fixed
+- Gate now bridges subagent session isolation: a `Task` PostToolUse for a TDD
+  phase agent advances the phase machine and records `skill_seen`, so cycles
+  routed through `task()` subagents (which do not inherit the plugin) no longer
+  stall.
+- `RED_VIOLATION` no longer false-triggers on a passing baseline pytest run
+  before any RED test exists (`red_test_written` guard), and the gate's own
+  `reset` CLI is allowed even in `RED_VIOLATION` so a violation is recoverable
+  autonomously instead of deadlocking the run.
+
 ## [0.1.2] - 2026-08-12
 
 ### Fixed
