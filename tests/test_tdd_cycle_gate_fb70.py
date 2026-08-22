@@ -2332,13 +2332,13 @@ def test_task_post_full_cycle_closes_to_ready(tmp_path: Path) -> None:
     _run_gate(workspace, _skill("bmad-tdd-coordinator"))
 
     _run_gate(workspace, _task("tdd-red-ornith"))
-    _run_gate(workspace, _task_post("tdd-red-ornith"))        # → CODING
+    _run_gate(workspace, _task_post("tdd-red-ornith"))  # → CODING
     _run_gate(workspace, _task("tdd-green-ornith"))
-    _run_gate(workspace, _task_post("tdd-green-ornith"))      # → CLEAN
+    _run_gate(workspace, _task_post("tdd-green-ornith"))  # → CLEAN
     _run_gate(workspace, _task("tdd-clean-ornith"))
-    _run_gate(workspace, _task_post("tdd-clean-ornith"))      # → REFACTOR
+    _run_gate(workspace, _task_post("tdd-clean-ornith"))  # → REFACTOR
     _run_gate(workspace, _task("tdd-refactor-ornith"))
-    _run_gate(workspace, _task_post("tdd-refactor-ornith"))   # → READY, cycle+1
+    _run_gate(workspace, _task_post("tdd-refactor-ornith"))  # → READY, cycle+1
 
     state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
     assert state["phase"] == "READY"
