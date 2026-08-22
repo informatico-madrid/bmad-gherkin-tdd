@@ -10,5 +10,4 @@ on_complete = ""
 
 # Default commands. Projects override in _bmad/custom/tdd-refactor.toml.
 test_cmd = "uv run pytest"
-mutation_cmd = "uv run mutmut run"
 msi_minimum = 85

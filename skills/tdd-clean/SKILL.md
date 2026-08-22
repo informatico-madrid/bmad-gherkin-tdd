@@ -79,10 +79,10 @@ description: TDD CLEAN Phase structural quality gate before mutation. Runs clean
 
 ## Does Not Own
 
-- NO ejecuta `mutmut run` (eso es REFACTOR)
+- NO ejecuta `mutmut run` ni `make mutation-check` (eso es el coordinador en RELEASE)
 - NO escribe tests nuevos (eso es RED)
 - NO cambia comportamiento (eso requeriria nuevo RED→GREEN)
-- NO anade `# pragma: no mutate` (PROHIBIDO — usar registro de mutantes en REFACTOR)
+- NO anade `# pragma: no mutate` (PROHIBIDO — usar registro de mutantes, lo gestiona el coordinador en RELEASE)
 - NO ejecuta `tdd-red`, `tdd-green`, ni `tdd-refactor` desde aqui
 - NO modifica el contrato Gherkin o el spec de la story
 - NO toma decisiones de arquitectura (eso es architect-review)
@@ -92,7 +92,7 @@ description: TDD CLEAN Phase structural quality gate before mutation. Runs clean
 - **Corre:** `{workflow.cleaner_cmd} <diff_files>` → debe dar PASS en los checks
 - **Corre:** `{workflow.test_cmd} --cov=<diff_files>` → debe dar 100% coverage + todos los tests PASS
 - **Corre:** `{workflow.cleaner_cmd} <diff_files>` → re-chequeo post-refactor
-- **Delega a:** `tdd-refactor` (para mutmut), `tdd-red` (si faltan tests)
+- **Delega a:** `tdd-refactor` (refactor estructural), el coordinador en RELEASE (mutación completa)
 
 ## Constraints
 

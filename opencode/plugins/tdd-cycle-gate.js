@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { isAbsolute, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 
 const PATCH_PATH_RE = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm;
 
@@ -68,6 +69,42 @@ function shouldDenyGateResult(result, loopMode) {
   );
 }
 
+const questionTools = new Set(["question", "prompt", "confirm", "ask"]);
+
+function resolveHumanPresentPath(directory) {
+  const cfg = process.env.BMAD_TDD_HUMAN_PRESENT_PATH;
+  return cfg
+    ? (isAbsolute(cfg) ? cfg : join(directory, cfg))
+    : join(directory, ".bmad-loop", "human-present");
+}
+
+function enforceUnattendedQuestionGate(directory) {
+  // Mechanical question gate driven by the human-present FLAG, with the
+  // loop-mode env as a fallback for sessions the engine exported the var to
+  // (the dev engine sessions). Deny the interactive question/prompt tool when:
+  //   (a) the flag file exists and says anything other than "yes", OR
+  //   (b) the flag file is missing AND BMAD_LOOP_MODE=1 (loop without a human
+  //       presence marker is unattended by definition).
+  // A missing flag OUTSIDE loop mode is an interactive session → allow.
+  const flag = resolveHumanPresentPath(directory);
+  let hasFlag = false;
+  let content = "";
+  try {
+    hasFlag = existsSync(flag);
+    if (hasFlag) content = readFileSync(flag, { encoding: "utf8" }).trim().toLowerCase();
+  } catch {
+    hasFlag = false;
+  }
+  const loopMode = process.env.BMAD_LOOP_MODE === "1";
+  const unattended = hasFlag ? content !== "yes" : loopMode;
+  if (unattended) {
+    throw new Error(
+      "🚫 Unattended (human-present != yes): the interactive `question` tool is " +
+        "DENIED mechanically (no human to answer); resolve from the planning corpus.",
+    );
+  }
+}
+
 function runPythonGate(directory, event, mapped, toolResponse = null) {
   // Gate path is configurable via BMAD_TDD_GATE_PATH (absolute or repo-relative).
   // Default: project-relative "hooks/tdd_cycle_gate.py".
@@ -101,6 +138,12 @@ function runPythonGate(directory, event, mapped, toolResponse = null) {
 
 const createTddCycleGate = async ({ directory }) => ({
   async "tool.execute.before"(input, output) {
+    // Unattended question gate (mechanical, not prose): in loop mode without a
+    // human present, the interactive question/prompt tool is denied outright.
+    if (questionTools.has(input.tool)) {
+      enforceUnattendedQuestionGate(directory);
+      return;
+    }
     const mapped = mapToolInput(input.tool, output.args);
     if (mapped) runPythonGate(directory, "PreToolUse", mapped);
   },

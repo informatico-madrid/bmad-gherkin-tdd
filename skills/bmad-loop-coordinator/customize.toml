@@ -1,0 +1,17 @@
+# Skill-default customization surface (layer 3). Real overrides live in
+# _bmad/custom/<name>.toml (team, layer 2) and _bmad/custom/<name>.user.toml
+# (personal, layer 1). Empty here on purpose — arrays append.
+
+[workflow]
+activation_steps_prepend = []
+activation_steps_append = []
+persistent_facts = []
+on_complete = ""
+
+# Defaults genéricos (el proyecto los sobreescribe en su override layer).
+# La skill y el agente leen estas claves vía resolve_customization.py --key workflow.
+run_cmd = "bmad-loop run --story <story-key>"
+bmad_loop_run_dir = "{project-root}/.bmad-loop/runs"
+human_present_path = "{project-root}/.bmad-loop/human-present"
+sprint_status_path = "{project-root}/_bmad-output/implementation-artifacts/sprint-status.yaml"
+obs_log_limit = 30

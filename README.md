@@ -27,11 +27,19 @@ installs it, every story is driven through:
   (`development | verification_preexisting | ambiguous`) and drives
   RED → GREEN → CLEAN → REFACTOR per scenario, with a durable four-phase bitácora.
 - **Four phase skills** — `tdd-red`, `tdd-green`, `tdd-clean`, `tdd-refactor`
-  (cleaner-gate + coverage in CLEAN, mutation killing + mutant register in REFACTOR).
+  (cleaner-gate + coverage in CLEAN, behaviour-preserving structural refactor in
+  REFACTOR, mutation gate owned by the coordinator at RELEASE).
 - **Mechanical enforcement** — `hooks/tdd_cycle_gate.py` forces the order and timing of
   each cycle: a test must fail in RED before production can be touched, CLEAN must run
-  before REFACTOR, and a development RED that *passes* trips a hard `RED_VIOLATION`
-  block instead of silently continuing.
+  before REFACTOR, a development RED that *passes* trips a hard `RED_VIOLATION`
+  block instead of silently continuing, and full-scope mutation is denied while a
+  cycle is open **in loop mode** — the coordinator runs it once at RELEASE. Outside
+  loop mode the gate stays fail-open (the audited bypass owns non-loop decisions).
+- **A loop orchestration agent** — `bmad-loop-coordinator` is a primary agent (plus a
+  matching skill it loads on bootstrap) that selects stories, launches and monitors
+  `bmad-loop` runs with adaptive waits, intervenes on failures and reviews results.
+  Interaction is gated on the project's `human-present` flag: unattended runs never
+  block on a human prompt.
 - **bmad-loop integration** — the dev adapter profile routes `bmad-loop run` through
   `bmad-dev-auto`, which owns the outer Verify → Review → closure
   (`## Auto Run Result`, `followup_review_recommended`, `status: done`, completion
@@ -42,7 +50,7 @@ installs it, every story is driven through:
 This module does **not** contain business rules, pipeline architecture, product mission,
 or stack-specific gates from any single project. Test, mutation and cleaner commands are
 **configurable per project** via the `_bmad/custom/` override layer — the module ships
-generic defaults (`uv run pytest`, `make mutation-check`, `uv run mutmut run`) that a
+generic defaults (`uv run pytest`, coordinator RELEASE `make mutation-check`) that a
 project overrides.
 
 ## Requirements
@@ -107,9 +115,29 @@ model = "deepseek/deepseek-v4-flash"   # whatever your project uses
 The mechanical gate (`hooks/tdd_cycle_gate.py`) can be wired as a pre-tool hook of your
 coding CLI; it activates only while a story is `in-progress` (or in `BMAD_LOOP_MODE=1`).
 
+### 4. Loop orchestration agent (optional but recommended)
+
+To run autonomous loops end-to-end, add the `bmad-loop-coordinator` primary agent from
+`opencode/agents/opencode.json.template` to your project's `.opencode/opencode.json`
+(it ships alongside the four phase subagents). The agent loads the methodology skill
+`bmad-loop-coordinator` on bootstrap and reads the project's `.bmad-loop/human-present`
+flag: when the flag is `no`, it never uses the interactive `question` tool and resolves
+everything from the planning corpus; when `yes`, it may ask when strictly necessary.
+
+```toml
+# .bmad-loop/human-present   (you create this file)
+no    # unattended: the coordinator acts autonomously
+```
+
+See the skill's `SKILL.md` for the full launch (`setsid`/`tmux`), monitor (adaptive
+waits), intervene and review protocol.
+
 ## How it works
 
 ```
+bmad-loop-coordinator (primary agent) — selects story, launches + monitors runs
+        │  (bootstrap: loads bmad-loop-coordinator skill; reads .bmad-loop/human-present)
+        ▼
 Story (spec) ──▶ gherkin-author ──▶ tests/contracts/<story>.feature   (# Status: APPROVED)
                                           │  (canonical input, @s1..@sn)
                                           ▼
@@ -153,19 +181,23 @@ paths, mission files and product rules:
 | `bmad-tdd-coordinator` | `verification_preexisting_threshold` | `100` |
 | `tdd-clean` | `cleaner_cmd` | `uv run python _bmad/gherkin-tdd/scripts/cleaner_gate.py` |
 | `tdd-red` / `tdd-green` / `tdd-refactor` | `test_cmd` | `uv run pytest` |
+| `bmad-loop-coordinator` | `run_cmd` | `bmad-loop run --story <story-key>` |
+| `bmad-loop-coordinator` | `human_present_path` | `{project-root}/.bmad-loop/human-present` |
+| `bmad-loop-coordinator` | `obs_log_limit` | `30` |
 
 ## Layout
 
 ```
 bmad_gherkin_tdd/             installer package (CLI + installer + payload staging)
-skills/                       the six methodology skills (gherkin-author, coordinator, 4 phases)
+skills/                       the seven methodology skills (loop-coordinator, gherkin-author,
+                              bmad-tdd-coordinator, 4 phases)
 setup/                        official BMAD installer surface (module.yaml, merge scripts, setup skill)
 hooks/tdd_cycle_gate.py       mechanical RED/GREEN/CLEAN/REFACTOR timing gate (env-parameterized)
 scripts/resolve_customization.py  # 3-layer TOML customization resolver
 templates/custom/bmad-dev-auto.toml        # routes bmad-dev-auto through the coordinator
 templates/custom/bmad-tdd-coordinator.toml # TDD coordination routine + release gates
 bmad-loop/profiles/*.toml     bmad-loop adapter profiles (dev → bmad-dev-auto → coordinator)
-opencode/agents/opencode.json.template  # tdd-*-ornith subagent definitions
+opencode/agents/opencode.json.template  # bmad-loop-coordinator primary + tdd-*-ornith subagents
 .opencode/plugins/tdd-cycle-gate.js     # installed project plugin (auto-discovered)
 scripts/{cleaner_gate,principles,scan_mutation_sites}.py # self-contained CLEAN toolchain
 docs/contract-rules.md        binding Gherkin contract rules
@@ -203,6 +235,16 @@ with or endorsed by SwarmForge.
 - **A test passes during RED** — that is a protocol violation. The gate blocks further
   tools (`RED_VIOLATION`); recover with `python3 hooks/tdd_cycle_gate.py reset` and
   re-classify the scenario (it may be `verification_preexisting`).
+- **`make mutation-check` (or a bare `uv run mutmut run`) is denied mid-story in
+  loop mode** — that is the intent: full-scope mutation is coordinator-owned at
+  RELEASE. Close the current `@s` cycle (REFACTOR → READY) or run it once at RELEASE.
+  Named-mutant inspection (`uv run mutmut show <name>`, `uv run mutmut run '<id>'`)
+  stays available. Outside loop mode the gate is fail-open by design.
+- **`question` is denied in unattended runs** — the gate (and the plugin) deny the
+  interactive `question`/`prompt` tool whenever the project's `.bmad-loop/human-present`
+  file exists but is not `yes` (or, in loop mode, when the flag file is missing).
+  If you are a live human and this bites you (e.g. a stale `BMAD_LOOP_MODE=1` in your
+  shell), write `yes` to `.bmad-loop/human-present` (or unset `BMAD_LOOP_MODE`) and retry.
 - **Contract is DRAFT / not APPROVED** — interactive: run `/gherkin-author` for human
   signature. In `bmad-loop` mode the coordinator auto-generates and auto-approves
   (`Approved-by: coordinator-auto`).

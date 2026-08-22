@@ -22,7 +22,7 @@ tdd-red / tdd-green / tdd-clean / tdd-refactor skills.
 - Decisión de qué AC implementar primero (la decide el contrato Gherkin)
 - Modificación del contrato Gherkin fuera del modo aplicable: firma humana en flujo interactivo,
   `coordinator-auto` únicamente bajo `BMAD_LOOP_MODE=1`
-- Ejecución de mutación fuera de la fase REFACTOR
+- Ejecución de mutación fuera del RELEASE del coordinador
 - Decisiones de arquitectura (eso lo hace architect-review)
 
 Direct prod/test edits by bmad-dev-auto are forbidden; inability to invoke coordinator -> HALT blocked.

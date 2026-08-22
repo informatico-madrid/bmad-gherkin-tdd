@@ -212,8 +212,9 @@ es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
         prompt="[contexto: test pasando + código actual + instrucciones de limpieza]"
       )
       ```
-      El subagente tdd-refactor-ornith limpia el código y mata mutantes.
-      Esperar a que complete (pytest PASS confirmado + MSI).
+      El subagente tdd-refactor-ornith limpia el código manteniendo pytest PASS.
+      Esperar a que complete (pytest PASS confirmado). La mutación completa NO es de
+      esta fase — el coordinador la corre UNA vez en RELEASE.
 
   - If classification = verification_preexisting:
       ```
@@ -242,7 +243,9 @@ es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
         prompt="[contexto: test pasando + CLEAN verificado + evidencia de clasificación]"
       )
       ```
-      Re-ejecuta mutación y registra MSI; no añade comportamiento nuevo.
+      Re-ancla; no ejecuta mutación ni certifica MSI aquí — la mutación completa es del
+      coordinador y corre UNA vez en RELEASE. Refactor estructural solo si el diff lo
+      requiere; no añade comportamiento nuevo.
 
 RELEASE (gates de salida — ejecutar DESPUÉS del último @s; el coordinator es
   implementation-only y NO cierra la story):
@@ -326,8 +329,8 @@ Por @s:
     el coordinador DEBE validar el output del tdd-clean con los 10 checks abajo.
     Si algún check FAIL → el coordinador decide: reintentar CLEAN (max 1 vez) o
     registrar gap en deferred-work (complejidad conocida, no cascarón).
-3. REFACTOR Gate: pytest debe pasar + mutmut debe alcanzar >= {workflow.msi_minimum} MSI
-   (sin pragmas nuevos)
+3. REFACTOR Gate: pytest debe pasar. Full mutation is NOT part of REFACTOR; do not
+   close a scenario on targeted `uv run mutmut run '<id>'` evidence alone.
 4. Verification Preexisting Gate: ALL 5 conditions must hold to skip RED; MSI verified via
    el comando de mutación del proyecto o el fichero de stats, NEVER from bitácora alone
 
@@ -359,9 +362,11 @@ Decisión del coordinador:
     (es mejor complejidad conocida y documentada que cascarón con 100% MSI falso)
 
 RELEASE (todos deben pasar para que el flujo exterior cierre la story):
-4. Mutation Gate: comando de mutación del proyecto debe alcanzar >= {workflow.msi_minimum} MSI
-   (configurable via {workflow.msi_minimum}, default 85) con 100% coverage. Los mutantes
-   sobrevivientes deben estar documentados en mutant-register.md.
+4. Mutation Gate: `{workflow.mutation_cmd}` (SOLO coordinador, UNA vez tras el último @s —
+   NUNCA delegar a subagentes). MSI >= {workflow.msi_minimum} (configurable, default 85) con
+   100% coverage. Los mutantes sobrevivientes deben estar documentados en mutant-register.md.
+   Inspección de mutantes conocidos: `mutmut show <name>` / `mutmut run '<name>'`
+   (coordinador-owned, dirigida). No certificar con `mutmut results`.
    PROHIBIDO añadir `# pragma: no mutate` — usar registro de mutantes en su lugar.
 5. Test Gate: `{workflow.test_cmd}` pasa (toda la suite).
 6. Gates adicionales del proyecto (declarados en el override layer) — solo los aplicables.
@@ -374,10 +379,11 @@ RELEASE (todos deben pasar para que el flujo exterior cierre la story):
 ## Constraints
 
 - NUNCA delegar el MUTATION GATE de RELEASE a subagentes — el veredicto final MSI lo
-  ejecuta el coordinador directamente. El subagente tdd-refactor-ornith SÍ ejecuta el
-  comando de mutación durante la fase REFACTOR para matar mutantes (refinar tests /
-  refactor a prueba); eso es el trabajo de matar mutantes, no el gate. El gate es solo
-  del coordinador y decide el cierre.
+  ejecuta el coordinador directamente, UNA vez tras el último @s. El subagente
+  tdd-refactor-ornith NO ejecuta el comando de mutación durante REFACTOR: la mutación
+  completa es propiedad de RELEASE. Para matar un mutante específico, el coordinador
+  inspecciona con `mutmut show <name>` / `mutmut run '<name>'` (dirigida) — nunca corre
+  el gate completo desde una fase.
 - NUNCA skip phases in development scenarios (RED->GREEN->CLEAN->REFACTOR is mandatory)
   - Exception: verification_preexisting classification permits skipping RED only when ALL 5
     CLASSIFY conditions are satisfied AND evidence is documented in bitácora
@@ -395,7 +401,7 @@ RELEASE (todos deben pasar para que el flujo exterior cierre la story):
 
 - Si un test no falla en RED: STOP y reportar al usuario
 - Si un test no pasa en GREEN: STOP y reportar al usuario
-- Si mutmut falla: STOP y reportar al usuario con lista de survived mutants
+- Si mutmut falla en RELEASE: STOP y reportar al usuario con lista de survived mutants
 
 ## Output
 

@@ -109,3 +109,66 @@ def test_absolute_gate_path_is_not_joined_to_project(tmp_path: Path) -> None:
         "tool_name": "Bash",
         "tool_input": {"command": "git status"},
     }
+
+
+def test_unattended_question_gate_denied_in_loop_without_human(tmp_path: Path) -> None:
+    """Mechanical question gate: in BMAD_LOOP_MODE without human-present=yes,
+    `question` is denied (prose is not enough for the module's own standard)."""
+    script = f"""
+      import {{ TddCycleGate }} from {json.dumps(PLUGIN.as_uri())};
+      process.env.BMAD_LOOP_MODE = "1";
+      const hooks = await TddCycleGate({{ directory: {json.dumps(str(tmp_path))} }});
+      const invoke = async () => {{
+        try {{
+          await hooks["tool.execute.before"](
+            {{ tool: "question" }},
+            {{ args: {{ prompt: "are you there?" }} }},
+          );
+          return "allowed";
+        }} catch (error) {{
+          return error.message;
+        }}
+      }};
+      console.log(JSON.stringify(await invoke()));
+    """
+    result = _node(script)
+    assert isinstance(result, str)
+    assert "DENIED" in result
+
+
+def test_unattended_question_allowed_when_human_present(tmp_path: Path) -> None:
+    (tmp_path / ".bmad-loop").mkdir(exist_ok=True)
+    (tmp_path / ".bmad-loop" / "human-present").write_text("yes\n", encoding="utf-8")
+    script = f"""
+      import {{ TddCycleGate }} from {json.dumps(PLUGIN.as_uri())};
+      process.env.BMAD_LOOP_MODE = "1";
+      const hooks = await TddCycleGate({{ directory: {json.dumps(str(tmp_path))} }});
+      try {{
+        await hooks["tool.execute.before"](
+          {{ tool: "question" }},
+          {{ args: {{ prompt: "are you there?" }} }},
+        );
+        console.log(JSON.stringify("allowed"));
+      }} catch (error) {{
+        console.log(JSON.stringify(error.message));
+      }}
+    """
+    assert _node(script) == "allowed"
+
+
+def test_interactive_question_allowed_outside_loop(tmp_path: Path) -> None:
+    """Outside BMAD_LOOP_MODE a human is present by definition -> question passes."""
+    script = f"""
+      import {{ TddCycleGate }} from {json.dumps(PLUGIN.as_uri())};
+      const hooks = await TddCycleGate({{ directory: {json.dumps(str(tmp_path))} }});
+      try {{
+        await hooks["tool.execute.before"](
+          {{ tool: "question" }},
+          {{ args: {{ prompt: "are you there?" }} }},
+        );
+        console.log(JSON.stringify("allowed"));
+      }} catch (error) {{
+        console.log(JSON.stringify(error.message));
+      }}
+    """
+    assert _node(script) == "allowed"

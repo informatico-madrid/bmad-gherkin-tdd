@@ -16,6 +16,7 @@ MODULE_NAME = "BMAD Gherkin TDD"
 MODULE_VERSION = "0.1.3"
 
 SKILL_NAMES = (
+    "bmad-loop-coordinator",
     "gherkin-author",
     "bmad-tdd-coordinator",
     "tdd-red",

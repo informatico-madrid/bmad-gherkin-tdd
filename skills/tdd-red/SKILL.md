@@ -44,7 +44,7 @@ description: TDD RED Phase write failing test with PERSISTENT_PROMPT_CONSTRAINTS
 
 - Implementación de código (eso es GREEN)
 - Refactorización (eso es REFACTOR)
-- Ejecución de mutmut (eso lo hace REFACTOR)
+- Ejecución de mutmut (eso lo hace el coordinador en RELEASE)
 - Modificación del contrato Gherkin (la firma la gestiona gherkin-author o el coordinator en loop_auto)
 - Decisiones de arquitectura (eso lo hace architect-review)
 - No ejecutes `tdd-green`, `tdd-clean` ni `tdd-refactor` desde aquí — el coordinador orquesta la secuencia

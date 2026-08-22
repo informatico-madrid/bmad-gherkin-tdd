@@ -14,12 +14,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The four TDD phase subagents in the OpenCode agent template deny the
   interactive `question` tool, so an unattended phase subagent fails fast
   instead of deadlocking on a prompt no human can answer.
+- Full-scope mutation now runs ONCE at RELEASE, coordinator-owned (`{workflow.mutation_cmd}`,
+  UNA vez tras el último `@s`, never delegated). `tdd-refactor` no longer runs or certifies
+  mutation: it is behaviour-preserving structural refactor + confirm PASS; named-mutant
+  inspection (`mutmut show <name>` / `mutmut run '<id>'`) remains the only mutation-related
+  action outside RELEASE. The OpenCode subagent template denies full mutation commands in
+  `permission.bash` for all four phase agents (a static mechanical guard in case the
+  subagent session is not plugin-inherited), and the loop-mode gate denies full-scope
+  mutation while a cycle is open.
+- Tests: `test_tdd_mutation_scope.py` (deny mid-cycle / allow RELEASE / named inspection /
+  path-scope semantics) and `test_agent_template_permissions` asserts the new denies.
+- New `bmad-loop-coordinator` orchestration layer: a primary agent (in the OpenCode
+  template) plus a matching skill it loads on bootstrap (installed via `installer.SKILL_NAMES`).
+  The coordinator selects stories, launches and monitors `bmad-loop` runs with adaptive
+  waits, intervenes on failures and reviews results; its interaction is gated on the
+  project's `.bmad-loop/human-present` flag (unattended runs never block on a human
+  prompt). README documents the agent, its skill, usage and configuration.
 
 ### Fixed
 - Gate now bridges subagent session isolation: a `Task` PostToolUse for a TDD
   phase agent advances the phase machine and records `skill_seen`, so cycles
   routed through `task()` subagents (which do not inherit the plugin) no longer
   stall.
+- Full-mutation deny now also catches `python3 -m mutmut run` and bare
+  `mutmut run`; the phase-subagent `permission.bash` denies cover arg-variant
+  and `python*` spellings; loop-mode deny messages no longer suggest the
+  disabled CLI `bypass`.
+- Full-mutation detection is **clause-scoped**: a named-mutant inspection no
+  longer masks a separate full-scope clause in the same command, while benign
+  commands that merely mention `make mutation-check`/`mutmut run` (`git commit -m`,
+  `grep`) are no longer false-denied; the `make` spell now tolerates leading flags
+  (`-j8`, `-C dir`, `-f Makefile`, `--directory=`).
+- The unattended `question`/`prompt` tool is now **mechanically denied** in loop
+  mode without `human-present=yes` (opencode/plugins/tdd-cycle-gate.js) — the
+  coordinator no longer relies on prompt prose to avoid the obs-21 deadlock.
+- The `bmad-loop-coordinator` primary agent no longer grants `webfetch`/`websearch`
+  (unused by its skill; removes a prompt-injection/context surface in unattended
+  autonomous runs).
 - `RED_VIOLATION` no longer false-triggers on a passing baseline pytest run
   before any RED test exists (`red_test_written` guard), and the gate's own
   `reset` CLI is allowed even in `RED_VIOLATION` so a violation is recoverable

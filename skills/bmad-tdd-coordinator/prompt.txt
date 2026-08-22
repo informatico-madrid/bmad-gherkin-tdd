@@ -65,7 +65,7 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
         prompt="[contexto: test pasando + código actual + instrucciones de limpieza]"
       )
       ```
-      → limpiar código + matar mutantes
+      → limpiar código (refactor estructural; pytest PASS) — la mutación completa es del coordinador en RELEASE
 4. **RELEASE** (gates de salida): mutation + test + gates adicionales del proyecto
    (los comandos exactos salen del override layer del proyecto).
    El coordinator es implementation-only: NO marca `status: done`, NO escribe
@@ -80,7 +80,9 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
 ## Reglas Críticas
 
 - NUNCA delegar el MUTATION GATE de RELEASE a subagentes — el veredicto final MSI lo
-  ejecuta el coordinador. El subagente REFACTOR sí ejecuta la mutación para matar mutantes.
+  ejecuta el coordinador, UNA vez tras el último @s. La mutación completa NO es de
+  REFACTOR: el subagente tdd-refactor-ornith solo refactoriza y confirma pytest PASS.
+  Inspección de mutantes con `mutmut show <name>` / `mutmut run '<name>'` (dirigida).
 - NUNCA skip phases (RED→GREEN→CLEAN→REFACTOR es obligatorio)
 - NUNCA marcar review/done sin los gates de RELEASE verdes
 - SKIPPED no es GREEN: un AC de ejecución en vivo cerrado con SKIPPED es ROJO -> story `blocked`
@@ -104,7 +106,7 @@ Para cada @s (desde el escenario del contrato firmado):
   5. task(subagent_type="tdd-refactor-ornith", ...)
 
 RELEASE:
-  1. Mutation Gate: {workflow.mutation_cmd} — MSI >= {workflow.msi_minimum}, coverage 100%
+  1. Mutation Gate: {workflow.mutation_cmd} (SOLO coordinador, UNA vez tras el último @s) — MSI >= {workflow.msi_minimum}, coverage 100%
   2. Test Gate: {workflow.test_cmd} — toda la suite pasa
   3. Gates adicionales del proyecto (declarados en el override layer) — solo los aplicables
   4. NO edites sprint-status.yaml (single-writer: el engine) ni cierres el spec
@@ -120,5 +122,5 @@ RELEASE:
   - human_required (sin loop): HALT y pedir /gherkin-author (firma humana, nunca auto-aprobar).
 - Si un test no falla en RED: STOP y reportar (el gate mecánico lo marca RED_VIOLATION en loop)
 - Si un test no pasa en GREEN: STOP y reportar
-- Si mutmut falla: STOP y reportar survived mutants
+- Si mutmut falla en RELEASE: STOP y reportar survived mutants
 - Si un gate determinado N/A por RELEASE SCOPE: registrar "N/A — skipped" y continuar. NUNCA escalar.

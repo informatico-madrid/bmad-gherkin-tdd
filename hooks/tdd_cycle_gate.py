@@ -49,9 +49,11 @@ Activation: the gate is **active only while a story is ``in-progress``** in the 
 file (configured via ``BMAD_TDD_SPRINT_STATUS``, default
 ``_bmad-output/implementation-artifacts/sprint-status.yaml`` — a state the dev flow sets
 mechanically). Outside a dev-story run it is inert. During non-TDD phases inside a story
-(mutation hardening, large refactors, chores) use the audited bypass:
+(mutation, large refactors, chores) OUTSIDE loop mode, use the audited bypass:
     python3 hooks/tdd_cycle_gate.py bypass "killing mutants"
     python3 hooks/tdd_cycle_gate.py resume
+In loop mode the bypass is disabled and full mutation is coordinator-owned at RELEASE
+(once after the last @s); a full-scope mutation run while a @s cycle is open is denied.
 
 Loop Mode (fb70 bypass closure): when ``BMAD_LOOP_MODE=1`` and ``BMAD_LOOP_STORY_KEY`` is set,
 the gate activates unconditionally regardless of sprint-status. It additionally:
@@ -59,6 +61,9 @@ the gate activates unconditionally regardless of sprint-status. It additionally:
   - Keeps per-story state isolated (``tdd-state-<safe>.json``).
   - Blocks direct Bash writes to src/tests (expanded practical closure).
   - Disables the CLI ``bypass`` command.
+  - Denies full-scope mutation commands (``make mutation-check``, unscoped
+    ``uv run mutmut run``) except at RELEASE (READY with no RED in flight) —
+    see _FULL_MUTATION_DENIED; named-mutant inspection stays allowed.
   - Fails-closed on internal exceptions.
 
 CLI:  status | reset | bypass "<reason>" | resume   (also runnable as a hook via stdin JSON)
@@ -75,6 +80,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import sys
 import uuid
 from collections.abc import Mapping
@@ -363,6 +369,651 @@ _COORDINATOR_MUST_BE_READY = (
     "(inicio de ciclo). Fase actual: {phase}. Espera a que el ciclo se cierre (REFACTOR → READY)."
 )
 
+# ── Full-mutation ownership (coordinator-owned at RELEASE) ────────────────────
+
+_FULL_MUTATION_DENIED = (
+    "🚫 Full mutation is coordinator-owned at RELEASE. Phase subagents cannot run "
+    "`make mutation-check` or unscoped `uv run mutmut run`. Inspect a known mutant ID "
+    "with `uv run mutmut show <name>` or `uv run mutmut run '<name>'` from the coordinator, "
+    "then run one canonical `make mutation-check` after the last @s."
+)
+# Full-scope mutation detection, evaluated PER CLAUSE (a command is split on
+# ``;``/``&&``/``||``/``|`` and shell wrappers — quote-aware), so that a
+# targeted-mutant clause in the same command does NOT mask a separate full-scope
+# clause (e.g. ``make mutation-check && mutmut run '<name__mutmut_1>'`` must STILL
+# be denied), and so that benign commands that only *mention* the text
+# (``git commit -m "run mutmut run yet"``, ``grep 'make mutation-check' docs/``,
+# ``echo '; make mutation-check next'``) are NOT blocked.
+#
+# Detection is anchored to the clause's leading command: the clause must begin
+# (after an optional ``sudo``/``env VAR=...`` prefix, flags allowed on both) with
+# ``make`` (any flag/value disposition) whose args include a ``mutation(-check)``
+# target, or with a ``mutmut run`` command chain. The mutmut chain tolerates:
+#   - ``uv run mutmut run`` and ``uv run --<flag> <arg> mutmut run``
+#   - ``python3.12 -m mutmut run`` (any versioned interpreter)
+#   - the venv binary directly: ``./.venv/bin/mutmut run``
+# A ``mutmut run`` that is a *named* inspection (first arg is a mutant ID like
+# ``x__mutmut_1``) is excluded per clause; bare/path-scoped/flag-driven
+# ``mutmut run`` invocations are full scope.
+_MUTMUT_RUN_CHAIN_RE = re.compile(
+    r"^(?:(?:uv|uvx)\s+(?:run\s+)?(?:--[\w=-]+\s+[^\s]+\s+)*)?"
+    r"(?:(?:python(?:3(?:\.\d+)?|\.\d+)?|pypy(?:3)?)\s+-m\s+)?"
+    r"(?:[\w./-]+/)?mutmut\s+run\b",
+    re.IGNORECASE,
+)
+_MAKE_MUTATION_TARGET_RE = re.compile(
+    r"\b(?:muta(?:\{t,\})?tion(?:-check)?)\b",
+    re.IGNORECASE,
+)
+_MAKE_COMMAND_RE = re.compile(
+    r"^(?:command\s+)?(?:/[\w./-]+/)?(?:g?make|bmake)(?:\s|$)",
+    re.IGNORECASE,
+)
+_MUTANT_ID_RE = re.compile(r"[\w./\\-]+__mutmut_\d+", re.IGNORECASE)
+# Compliance: quote-free command words (used by the sudo/env prefix stripper).
+_COMMAND_WORD_RE = re.compile(
+    r"^(?:make|mutmut|uvx?|npx|python(?:3(?:\.\d+)?|\.\d+)?|pypy(?:3)?|sh|bash)$",
+    re.IGNORECASE,
+)
+_SHELL_WRAPPER_RE = re.compile(
+    r"(?:/bin/)?(?:sh|bash|zsh|fish|ksh)\s+(?:--?[A-Za-z][\w-]*\s+)*"
+    r"(?:-c\s*(?:['\"]|(?=\S))|['\"])",
+    re.IGNORECASE,
+)
+
+
+def _strip_command_prefix(clause: str) -> str:
+    """Strip a leading ``sudo``/``env`` prefix (flags, flag-values and ``VAR=...``
+    assignments) so the clause head is the actual command (make / mutmut / python
+    / uv). Quote-aware: ``env AA=1 BB="two words" make mutation-check`` must stop
+    at ``make``. Flag values are consumed only when they are NOT a reserved
+    command word (so ``sudo -E make mutation-check`` stops at ``make``).
+
+    ``env -S STRING`` / ``env -S'STRING'`` / ``env --split-string=STRING`` is a
+    meta-flag: GNU/uutils env splits STRING into argv and executes its first
+    word, so the STRING IS the real command. We return it (plus any remaining
+    tokens) unchanged so the make/mutmut checks run against the real head.
+    ``-S'…'`` (attached, single shell word via getopt) is also supported.
+    """
+    try:
+        tokens = shlex.split(clause, posix=True)
+    except ValueError:
+        tokens = clause.split()  # unbalanced quotes → fall back to naive
+    if not tokens:
+        return clause.strip()
+    # Shell grouping / process-prefix wrappers (R17 F3): `(make mutation-check)`
+    # runs `make` in a subshell, `{ make mutation-check; }` in a group, and
+    # `time`/`nohup`/`nice`/`setsid`/`stdbuf` run the rest as a prefix. All are
+    # the SAME command — peel them to expose the real head (recursive, so
+    # `( time make … )` / `time nohup make …` also resolve).
+    head = clause.strip()
+    while True:
+        changed = False
+        low = head.lower()
+        if low.startswith("(") and not low.startswith("(("):
+            # `( cmd ... )` — subshell
+            inner = head[1:].lstrip()
+            # drop a trailing `)` group after the args
+            if inner.endswith(")") and "(" not in inner:
+                inner = inner[:-1].rstrip()
+            head = inner
+            changed = True
+        elif low.startswith("{ ") or low == "{":
+            # `{ cmd ... ; }` — group; peel `{` and a trailing `; }`
+            inner = head[1:].lstrip()
+            if inner.endswith(("; }", "}")):
+                inner = inner[:-2].rstrip("; ") if ";" in inner else inner.rstrip("}")
+            head = inner
+            changed = True
+        else:
+            for word in ("time ", "nohup ", "nice ", "setsid ", "stdbuf "):
+                if low.startswith(word):
+                    head = head[len(word) :].strip()
+                    changed = True
+                    break
+        if not changed:
+            break
+    if head != clause.strip():
+        return _strip_command_prefix(head)
+    if tokens[0].lower() == "builtin":
+        # `builtin <cmd>` runs a builtin; `builtin command …` delegates to the
+        # command builtin. Peeling `builtin` is FP-safe (`builtin echo hi`,
+        # `builtin command -v pytest` stay fine).
+        rest = tokens[1:]
+        return _strip_command_prefix(" ".join(rest).strip()) if rest else clause.strip()
+    if tokens[0].lower() == "command":
+        # `command` (and `command -p`) is a bash builtin that runs the next
+        # command: `command mutmut run` IS `mutmut run`. Strip it and recurse.
+        rest = tokens[1:]
+        if rest and rest[0] in ("-p", "-v", "-V", "--"):
+            rest = rest[1:]
+        return _strip_command_prefix(" ".join(rest).strip()) if rest else clause.strip()
+    if tokens[0].lower() not in ("sudo", "env"):
+        return clause.strip()
+    i = 1  # consumed sudo/env
+    while i < len(tokens):
+        tok = tokens[i]
+        # Split-string meta-flag (GNU/coreutils + uutils): the value is a command.
+        if tok == "-S" or tok == "-s" or tok == "--split-string":
+            rest = " ".join(tokens[i + 1 :])
+            return _strip_command_prefix(rest) if rest else clause.strip()
+        m = re.match(r"^-S|^--split-string=", tok)
+        if m:
+            # Attached forms handled here: `-S'…'` may tokenize with a leading
+            # space (quoted value became one token `-S make …`). Treat nearest
+            # option-letter boundary after `-S` as the value start.
+            if tok.startswith("-S") and tok != "-S":
+                value = tok[2:]
+                if value.startswith(" "):
+                    value = value.lstrip()
+                return _strip_command_prefix(" ".join([value, *tokens[i + 1 :]]).strip())
+            if "=" in tok:
+                value = tok.split("=", 1)[1]
+                return _strip_command_prefix(" ".join([value, *tokens[i + 1 :]]).strip())
+        # Nested env/sudo chain: recursively strip the next level.
+        if tok.lower() in ("sudo", "env"):
+            return _strip_command_prefix(" ".join(tokens[i:]))
+        # Long/short flag (`--dir`, `-j`, `--unset=FOO`).
+        if re.match(r"^--?[A-Za-z][\w-]*(?:=\S+)?$", tok):
+            if "=" not in tok and _command_value_flag(tokens, i):
+                i += 1  # consume the flag's separate value (e.g. `-u root`)
+            i += 1
+        elif re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
+            i += 1  # env VAR=... assignment (quoted value already one token)
+        elif not _COMMAND_WORD_RE.match(tok):
+            i += 1  # bare non-command word (env binary target?) — tolerate
+        else:
+            break  # command head reached (make / mutmut / python / ...)
+    return " ".join(tokens[i:])
+
+
+def _command_value_flag(tokens: list[str], i: int) -> bool:
+    """True if tokens[i] is a flag whose value is the NEXT token (and that value
+    is not itself a command word / flag)."""
+    if (i + 1) >= len(tokens):
+        return False
+    nxt = tokens[i + 1]
+    if re.match(r"^--?[A-Za-z]", nxt):
+        return False  # next is another flag → current is a boolean flag
+    return not _COMMAND_WORD_RE.match(nxt)
+
+
+def _command_clauses(command: str) -> list[str]:
+    """Split a command into top-level clauses (quote-aware).
+
+    Splits on ``;``/``&&``/``||``/``|``/newlines that are OUTSIDE any quoted
+    string (single or double quote, incl. here-heredocs treated conservatively),
+    then unpacks ``sh -c``/``bash -c`` payloads as their own clause.
+
+    NOTE: a backslash before a newline (``\\\n``) is handled at DETECTION time
+    (see ``_mut_clauses_after_continuations``), NOT here: joining it here would
+    corrupt the inside of heredocs (whose content is literal — bash does NOT
+    line-continue inside ``<<'EOF'``), causing a false deny on a doc that merely
+    mentions ``make \⏎ mutation-check`` as text.
+    """
+    clauses: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    i = 0
+    n = len(command)
+    while i < n:
+        char = command[i]
+        if char in ("'", '"'):
+            quote = None if quote == char else (quote or char)
+            current.append(char)
+        elif char in ";&|\n" and quote is None:
+            clause = "".join(current).strip()
+            if clause:
+                clauses.append(clause)
+            current = []
+        else:
+            current.append(char)
+        i += 1
+    if current:
+        clause = "".join(current).strip()
+        if clause:
+            clauses.append(clause)
+
+    expanded: list[str] = []
+    for clause in clauses:
+        match = _SHELL_WRAPPER_RE.search(clause)
+        if match:
+            inner = clause[match.end() :].strip()
+            if inner.startswith(("'", '"')):
+                q = inner[0]
+                end = inner.find(q, 1)
+                if end != -1:
+                    inner = inner[1:end]
+            expanded.extend(_command_clauses(inner))
+        else:
+            expanded.append(clause)
+    return expanded
+
+
+def _is_named_mutmut_inspection(clause: str) -> bool:
+    """True if a ``mutmut run`` clause is a *named* inspection (first arg is a
+    mutant ID). Path-scoped or flag-driven ``mutmut run`` is NOT."""
+    match = _MUTMUT_RUN_CHAIN_RE.match(clause)
+    if not match:
+        return False
+    rest = clause[match.end() :].strip()
+    if not rest or rest.startswith(("-", "--")):
+        return False
+    token = rest.split(None, 1)[0].strip("'\"")
+    return bool(_MUTANT_ID_RE.search(token))
+
+
+def _clause_is_full_mutation(clause: str) -> bool:
+    """True if a single clause is canonical full-scope mutation.
+
+    Because the head may be produced by an ``env -S``/``-S'…'`` meta-flag whose
+    value is itself a wrapped command (``env -S '/bin/sh -c make …'``), the
+    stripped base is re-expanded through ``_command_clauses`` so shell-wrapper
+    payloads are unpacked before matching.
+    """
+    base = _strip_command_prefix(clause)
+    if not base:
+        return False
+    return any(_clause_head_is_full_mutation(head) for head in _command_clauses(base))
+
+
+def _innermost_param_span(text: str) -> tuple[int, int, str] | None:
+    """Return (start, end, body) of the INNERMOST `${…}` span (no nested `${`
+    inside), or None. Required because nested `${A:-${B:-make}}` has an inner
+    `}` that a single `[^}]*` regex cannot balance."""
+    start = text.find("${")
+    if start == -1:
+        return None
+    i = start + 2
+    depth = 1
+    while i < len(text):
+        if text.startswith("${", i):
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return start, i + 1, text[start + 2 : i]
+        i += 1
+    # Unbalanced (misformed) — leave it as-is; caller stops.
+    return None
+
+
+def _demangle_var_default(body: str) -> str:
+    """Return the literal CARGO of a `${...}` expansion, or "" if none.
+
+    Bash's parameter expansion: ``${Var:-word}`` / ``${Var=word}`` /
+    ``${Var:+word}`` / ``${Var:?word}`` / ``${Var-word}`` expand to ``word``
+    (or, for ``:+``, to ``word`` when the var is set) — when the var is
+    unset/set accordingly, the WORD becomes part of argv. Also covers special
+    parameters (`${@:-word}`, `${*:-word}`). The demangle is conservative
+    (assumes unset vars / empty positional args): it keeps the literal cargo and
+    recurses on nested `${…}` within it. Plain `${Var}` / `${@}` (no operator)
+    and removal patterns (`#pat`/`%pat`) have no cargo.
+    """
+    # Find the first operator; the NAME may be `@`, `*`, digits, `-`, `?`, etc.
+    idx = len(body)
+    op = None
+    for candidate in (":-", ":+", ":?", ":=", "-", "+", "="):
+        j = body.find(candidate)
+        if j != -1 and j < idx:
+            idx = j
+            op = candidate
+    if op is not None:
+        cargo = body[idx + len(op) :]
+        return _shell_demangle(cargo)
+    return ""
+
+
+def _shell_demangle(text: str) -> str:
+    """Strip shell expansions enough to reconstruct the argv a command yields.
+
+    Conservative (assumes unset vars / empty positional args, the attacker's own
+    tool). Applies to a FIXPOINT so nested ``${…:-${…:-make}}`` and positional
+    splices (``make${@}``, ``mut$@mut``, ``${@:-make}``) collapse to the
+    reassembled argv: `${…}` default/alternate Cargo is kept and re-demangled
+    recursively; `$@`/`$*`/`$N` (positional) have no cargo and vanish; ``$X``
+    short vars are stripped; backticks/quotes removed. Used only by nets already
+    scoped to mutation-capable clause heads, so aggressive stripping does not
+    affect benign ``echo $PATH …`` passages.
+    """
+    out = text
+    # Demangle nested `${…}` to a FULL fixpoint by expanding INNERMOST-first.
+    # `re.sub` can't handle nested `${…:-${…}…}` (the `}` inside breaks `[^}]*`),
+    # so we scan for the innermost balanced `${…}` span and expand it outward.
+    # Each pass removes at least one `${…}` marker, so the loop terminates in
+    # O(depth × len) — no hard depth bound, closing the depth≥17 bypass.
+    while "${" in out:
+        inner = _innermost_param_span(out)
+        if inner is None:
+            break
+        start, end, body = inner
+        out = out[:start] + _demangle_var_default(body) + out[end:]
+    out = re.sub(
+        r"\b([A-Za-z_][A-Za-z0-9_]*)=\$\(([^()]*)\)\s+[$]\1\b",
+        r"\2 \2",
+        out,
+    )
+    out = re.sub(r"\$\([^()]*\)", "", out)
+    # Env-assignment head reassembly: `MUT=mutmut $MUT run` executes `mutmut run`
+    # (the assignment then `$VAR`). Resolve `VAR=word $VAR …` FIRST (before the
+    # `$X` strip erases the var name) by substituting the value for the var use.
+    out = re.sub(
+        r"\b([A-Za-z_][A-Za-z0-9_]*)=(\S+)\s+[$]\1\b",
+        r"\2 \2",
+        out,
+    )
+    # `@`, `*`, `#`, `?`, digits are not [A-Za-z_]; strip them too (positional / special).
+    out = re.sub(r"\$[@*#?0-9]", "", out)
+    # ANSI-C quoting: `$'make'` / `$"make"` is `make` as a shell word (the `$`
+    # is NOT a variable ref here). Collapse before the `$X` strip so `$'make'`
+    # → `make`, never `ake` (which would hide the runner head).
+    out = re.sub(r"\$(?:'[^']*'|\"[^\"]*\")", lambda m: m.group(0)[1:], out)
+    out = re.sub(r"\$[A-Za-z_]", "", out)  # any single-letter `$X` short var
+    out = out.replace("`", "")
+    # Backslash escapes: bash folds `ma\ke` → `make` and `\n`+newline is a line
+    # continuation (joined before execution), so collapse `\x` → x and strip a
+    # trailing `\` before a newline. This closes the backslash word-splice.
+    out = re.sub(r"\\(\n|\r\n)", "", out)  # line continuation → join
+    out = out.replace("\\", "")
+    return out.replace("'", "").replace('"', "")
+
+
+def _strip_literal_expansions(text: str) -> str:
+    """Remove the content of single-quoted spans that CONTAIN an expansion
+    (``$``/backtick), leaving plain quoted text (e.g. ``'name__mutmut_5'``)
+    untouched. A literal ``'$(make …)'`` / ``'`make …`'`` must not be mistaken
+    for a real expansion; a named-mutant ID stays intact."""
+    return re.sub(r"'[^']*[${`][^']*'", "''", text)
+
+
+def _clause_head_is_full_mutation(base: str) -> bool:
+    """True if a *stripped* clause head is canonical full-scope mutation."""
+    # Single-quoted spans containing expansions are literal in bash — drop their
+    # content first so ``'$(make …)'``/``'`make …`'`` never trip the nets.
+    base = _strip_literal_expansions(base)
+    # Shell-argv-normalized view for the checks, so that quote splices
+    # (``mu't'tation-check``) and empty command-substitution splices
+    # (``make$() mutation-check``, ``mutmut$() run``) both collapse to the real
+    # token before matching.
+    normalized = re.sub(r"\$\(\)|`[^`]*`|\$\{\}", "", base)
+    normalized = normalized.replace("'", "").replace('"', "")
+    # ``make ... mutation(-check)`` at clause head (any flag/value disposition).
+    if _MAKE_COMMAND_RE.match(normalized) and _MAKE_MUTATION_TARGET_RE.search(normalized):
+        return True
+    # Conservative net for the make-head + command-substitution family: ``make
+    # $(echo mu)tation-check`` executes `make mutation-check`. Any `make` head
+    # whose args contain a substitution is a potential target splice → deny.
+    if _MAKE_COMMAND_RE.match(normalized) and re.search(r"\$\(|`|\$\{|\$[A-Za-z]", base):
+        return True
+    # ``(uv | uvx | python3.12 -m | ./.venv/bin/)... mutmut run`` at the head,
+    # and NOT a named inspection.
+    if _MUTMUT_RUN_CHAIN_RE.match(normalized):
+        return not _is_named_mutmut_inspection(normalized)
+    # Conservative net for the mutmut-chain head + substitution family (mirror
+    # of the make-head net above): a substitution whose OUTPUT is the verb
+    # (``mutmut ${A:-$(echo run)} src/`` → bash runs ``mutmut run src/``) is not
+    # observable in the demangled view (the ``$()`` payload disappears), so any
+    # mutmut-runner head carrying ``$()``/backtick/``${``/``$X`` is a potential
+    # verb splice → deny (over-denial = safe direction; named inspection with
+    # NONE of those markers still allowed).
+    # Only a head that demangles into a `mutmut`-chain (or plainly contains
+    # `mutmut`) is a mutmut verb-splice risk. `uv run`/`python -m` heads WITHOUT
+    # `mutmut` are NOT mutation runners (e.g. `uv run pytest ${X:-x}` is benign)
+    # — they must not be denied by this net. The demangled clause is used (it
+    # strips `$(…)`/`${…}`/backticks correctly), and the runner tokens are the
+    # first ones: `mutmut`, `uv run mutmut`, `python3 -m mutmut`. Substitution
+    # payloads that merely mention the word (e.g. ``cmd $(mutmut show …)``)
+    # vanish in the demangle and never trip this.
+    runner_words = _shell_demangle(base)
+    runner_head_has_mutmut = bool(
+        re.match(
+            r"^\s*(?:(?:command\s+)?(?:[\w./-]+/)?(?:uvx?|python(?:3(?:\.\d+)?)?|pypy(?:3)?)\s+"
+            r"(?:(?:-m|run)\s+)?(?:[\w./-]+/)?mutmut\b"
+            r"|(?:command\s+)?(?:[\w./-]+/)?mutmut\b)",
+            runner_words,
+            re.IGNORECASE,
+        )
+        or runner_words.strip().startswith("mutmut")
+        or re.match(
+            r"^\s*(?:uvx?|python(?:3(?:\.\d+)?)?|pypy(?:3)?)\s+(?:-m\s+)?mutmut\b",
+            runner_words,
+            re.IGNORECASE,
+        )
+    )
+    if runner_head_has_mutmut and re.search(r"\$\(|`|\$\{|\$[A-Za-z@*]", base):
+        return True
+    # Conservative REASSEMBLY net (round 6-7): parameter expansion / backtick /
+    # $var can reassemble `make` or `mutmut ... run` across variable splices
+    # (`mu$Umut`, `ma$Xke`, `m${A}ut${B}mut`). We demangle the raw head and
+    # re-run the two canonical checks against the demangled shell view. The net
+    # is scoped to the clause HEAD (not a `git commit -m "..."` message) and
+    # single-quoted literal mentions were already skipped by the clause splitter.
+    demangled = _shell_demangle(base)
+    if _MAKE_COMMAND_RE.match(demangled) and _MAKE_MUTATION_TARGET_RE.search(demangled):
+        return True
+    if _MUTMUT_RUN_CHAIN_RE.match(demangled):
+        return not _is_named_mutmut_inspection(demangled)
+    # Token-splice fallback (round 7): when the CLAUSE HEAD is a mutation-capable
+    # command (`make`/`mutmut`/`uv`/`python`/…), a leading head token that
+    # demangles into a `mu`/`ma`/`ru` stem with a $/backtick splice
+    # (`mu${T}mut`, `ma${X}ke`) can reassemble a mutation argv at runtime. The
+    # whole net is guarded on the FIRST token being a mutation-capable runner, so
+    # a benign `echo mut${UNSET}` / `git commit -m "…${mut}…"` message is NOT
+    # blocked (its head is echo/git, not make/mutmut). A demangled stem trips it
+    # only when it is a plausible reassembled mutation WORD (>=4 chars, or the
+    # verb `mut`/`run`).
+    head_word = _shell_demangle(base.split(None, 1)[0] if base.split() else "")
+    if re.match(
+        r"^(?:make|mutmut|mut|uv|uvx|python|pypy|gmake|bmake)[\w-]*$", head_word, re.IGNORECASE
+    ) or re.match(r"^mu\w*mut$", head_word, re.IGNORECASE):
+        for token in base.split()[:3]:
+            if "=" in token:
+                continue  # variable assignment, not a command token
+            if "$" not in token and "`" not in token:
+                continue
+            if "$" not in token and "`" in token and not re.search(r"\w`\w", token):
+                continue  # standalone backtick span
+            stem = _shell_demangle(token)
+            if not re.match(r"^(?:mu|ma|ru)", stem, re.IGNORECASE):
+                continue
+            # Within a mutation-capable head, ANY `ru`/`mu` stem with a splice is
+            # a reassembly risk (`mutmut ru${N} n` → `mutmut run`, `mu$Tmut`).
+            if re.match(r"^(?:ru|mu|mut|ma)", stem, re.IGNORECASE):
+                return True
+    return False
+
+
+# Substitution scan: every ``$(...)``/backtick payload region is collected and
+# TESTED — never dropped, regardless of nesting depth (bash executes the whole
+# tree, so a 200-deep payload must be checked). `_MAX_SUBST` is only a
+# pathological-input guard preventing unbounded recursion on adversarial input;
+# the termination guarantee is that each level strips >=2 chars, so the scan is
+# bounded by command length. We push beyond the cap whenever the payload still
+# contains ``$(``/backtick — dropping there would be a bypass window.
+_MAX_SUBST = 100000
+
+
+def _substitution_payloads(command: str) -> list[str]:
+    """Scan a command ONCE and return every ``$(...)``/backtick payload region,
+    including nested ones, at any quote-valid context. Single-quoted spans are
+    skipped (bash treats ``'...$(...)...'`` as literal), so benign literal
+    mentions are not false-denied. Iterative (explicit stack), O(total chars),
+    no exponential re-scanning. A payload is pushed for scanning whenever it
+    still contains ``$(``/backtick, so deep nesting (up to ``_MAX_SUBST`` levels,
+    > command length in practice) is always covered — no depth window.
+    """
+    results: list[str] = []
+    stack: list[tuple[str, int]] = [(command, 0)]
+    while stack:
+        text, depth = stack.pop()
+        i = 0
+        n = len(text)
+        single = False  # inside a single-quoted span → `$(` / backtick are literal
+        while i < n:
+            ch = text[i]
+            if ch == "'":
+                single = not single
+                i += 1
+                continue
+            if single:
+                i += 1
+                continue
+            if ch == "`":
+                end = text.find("`", i + 1)
+                if end == -1:
+                    break
+                payload = text[i + 1 : end]
+                if payload and payload not in results:
+                    results.append(payload)
+                    if depth < _MAX_SUBST and ("$(" in payload or "`" in payload):
+                        stack.append((payload, depth + 1))
+                i = end + 1
+            elif text.startswith("$(", i):
+                depth_paren = 1
+                j = i + 2
+                while j < n and depth_paren:
+                    if text.startswith("$(", j):
+                        depth_paren += 1
+                    elif text[j] == ")":
+                        depth_paren -= 1
+                        if depth_paren == 0:
+                            break
+                    j += 1
+                payload = text[i + 2 : j]
+                if payload and payload not in results:
+                    results.append(payload)
+                    if depth < _MAX_SUBST and ("$(" in payload or "`" in payload):
+                        stack.append((payload, depth + 1))
+                i = j + 1 if depth_paren == 0 else n
+            else:
+                i += 1
+    return results
+
+
+def _full_mutation_in_substitution(command: str) -> bool:
+    """Detect full-scope mutation hidden inside shell command substitution
+    (``$(...)`` or backticks), which bash runs *before* the outer command.
+
+    Single-pass: each region is tested with the CHEAP clause matcher (not the
+    recursive ``_is_full_mutation_command``, which would re-scan nested regions
+    exponentially). Regions at every nesting depth are already produced as
+    siblings by ``_substitution_payloads``, so nested substitution is covered
+    without re-entering full detection per depth.
+    """
+    for payload in _substitution_payloads(command):
+        if any(_clause_is_full_mutation(c) for c in _command_clauses(payload)):
+            return True
+    return False
+
+
+def _mask_heredoc_bodies(command: str) -> str:
+    """Blank out the body of heredocs, preserving executable substitutions.
+
+    Heredoc quoting rules:
+      - QUOTED delimiter (`<<'EOF'` / `<<"EOF"`): the whole body is LITERAL —
+        nothing in it executes. Blank everything (preserving newline shape).
+      - UNQUOTED delimiter (`<<EOF` / `<<-EOF`): plain text stays data (never a
+        command), but command substitutions ``$(…)`` and backticks ARE executed
+        by bash (their output feeds the reader). So for unquoted heredocs we
+        blank the body but KEEP the inner ``$(…)``/backtick spans, letting the
+        substitution scan detect ``$(make mutation-check)`` inside the body while
+        plain ``make mutation-check`` text never trips a command clause.
+    This is why the earlier "mask everything" pass was wrong: it hid the
+    executed ``$(…)`` of unquoted heredocs (R17 F2).
+    """
+    masked = command
+    for m in re.finditer(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1", command):
+        label = m.group(2)
+        quoted = bool(m.group(1))
+        body_start = command.find("\n", m.end())
+        if body_start == -1:
+            return masked  # unterminated line → nothing to mask
+        body_start += 1
+        cursor = body_start
+        while True:
+            line_end = masked.find("\n", cursor)
+            if line_end == -1:
+                line = masked[cursor:]
+                if line.strip() == label and not quoted:
+                    # unquoted → keep $(...) spans only
+                    masked = _blank_keep_subs(masked, body_start, cursor + len(line))
+                elif line.strip() == label:
+                    body = masked[body_start : cursor + len(line)]
+                    masked = (
+                        masked[:body_start]
+                        + ("\n" * body.count("\n"))
+                        + masked[cursor + len(line) :]
+                    )
+                return masked  # unterminated heredoc → ignore rest (or masked prior)
+            line = masked[cursor:line_end]
+            if line.strip() == label:
+                if quoted:
+                    body = masked[body_start : line_end + 1]
+                    masked = (
+                        masked[:body_start] + ("\n" * body.count("\n")) + masked[line_end + 1 :]
+                    )
+                else:
+                    masked = _blank_keep_subs(masked, body_start, line_end + 1)
+                break
+            cursor = line_end + 1
+    return masked
+
+
+def _blank_keep_subs(text: str, start: int, end: int) -> str:
+    """Blank [start,end) of ``text`` preserving ``$(…)``/backtick spans inside
+    (they are executed in an unquoted heredoc body)."""
+    region = text[start:end]
+    keep = re.findall(r"\$\([^()]*\)|`[^`]*`", region)
+    if not keep:
+        blank = "\n" * region.count("\n")
+        return text[:start] + blank + text[end:]
+    # Rebuild: blank each line except the spans (place them back in place).
+    out = []
+    idx = 0
+    for span in re.finditer(r"\$\([^()]*\)|`[^`]*`", region):
+        out.append("\n" * region[idx : span.start()].count("\n"))
+        out.append(region[span.start() : span.end()])
+        idx = span.end()
+    out.append("\n" * region[idx:].count("\n"))
+    return text[:start] + "".join(out) + text[end:]
+
+
+def _is_full_mutation_command(command: str) -> bool:
+    """True if ANY clause (or command substitution within it) is a canonical
+    full-scope mutation command. A named inspection in one clause never masks a
+    full-scope clause elsewhere.
+
+    Two preprocessing steps run against the FINAL detection view (NOT the raw
+    clause splitter, which must stay intact for bitácora / reset semantics):
+      1. Backslash-newline (``\\\n``) line continuations are joined FIRST —
+         bash resolves them BEFORE delimiting a heredoc, so `<<EOF; make \⏎
+         mutation-check` is one command line whose heredoc body starts on the
+         FOLLOWING line.
+      2. Heredoc bodies are MASKED (literal; never executed) — only run after
+         the continuation join so a literal ``\⏎`` inside a heredoc body (now a
+         plain space) can never be mistaken for a joined command.
+    """
+    view = re.sub(r"\\\n", " ", command)
+    view = _mask_heredoc_bodies(view)
+    clauses = _command_clauses(view)
+    if any(_clause_is_full_mutation(c) for c in clauses):
+        return True
+    # Substitutions can hide inside a shell-wrapper payload (`bash -c 'echo
+    # $(make mutation-check)'`): the -c payload is unpacked as its own clause by
+    # `_command_clauses`, so scan substitutions per-clause too, not just over the
+    # original command string (which would treat the wrapper's single quotes as
+    # a literal and skip the inner `$(…)`).
+    for cl in clauses:
+        if _full_mutation_in_substitution(cl):
+            return True
+    return _full_mutation_in_substitution(view)
+
+
+def _full_mutation_allowed(state: State) -> bool:
+    """Coordinator RELEASE runs after a closed cycle: READY and no RED in flight."""
+    return state.phase == READY and not state.red_pending
+
+
 # ── Legacy refactor-incomplete message ────────────────────────────────────────
 
 _REFACTOR_INCOMPLETE_FIX = (
@@ -624,13 +1275,45 @@ def handle_pre_tool_use(tool_name: str, tool_input: dict, state: State) -> None:
 
 
 def _is_gate_reset_command(command: str) -> bool:
-    """True if the command invokes the TDD gate's own CLI ``reset``.
+    """True if the command is SOLELY the TDD gate's own ``reset`` CLI.
 
     This is the autonomous recovery hatch: it must be allowed even in
     RED_VIOLATION, otherwise a (possibly false) violation deadlocks the run —
-    the reset needed to escape is itself blocked.
+    the reset needed to escape is itself blocked. Hard requirements:
+      - a single clause only (no ``&&``/``;``/``|``),
+      - no command substitution (``reset $(…)``) or backticks,
+      - shlex-parseable argv whose LAST token is exactly ``reset`` and that ends
+        in ``tdd_cycle_gate.py ... reset`` with NO mutation-bearing traffic
+        (``make …``/``mutmut …``) anywhere in the command,
+      - the interpreter/runner prefix is limited to python/uv/venv/sudo/env.
+    This keeps the hatch usable (`uv run python hooks/…reset`,
+    `./.venv/bin/python …`, `env X=1 python3 …`) while closing the R6 suffix-rider
+    (``make mutation-check …/tdd_cycle_gate.py reset``) escape.
     """
-    return bool(re.search(r"tdd_cycle_gate\.py\s+reset\b", command))
+    if re.search(r"\$\(|`", command):
+        return False
+    clauses = _command_clauses(command)
+    if len(clauses) != 1:
+        return False
+    try:
+        argv = shlex.split(clauses[0])
+    except ValueError:
+        return False
+    if not argv or argv[-1] != "reset":
+        return False
+    joined = " ".join(argv)
+    # Reject any mutation-bearing traffic in the command.
+    if re.search(r"\b(?:mutmut|muta(?:\{t,\})?tion(?:-check)?)\b", joined, re.IGNORECASE):
+        return False
+    # The gate file must appear as an argument (not necessarily argv[0]).
+    gate_idx = next(
+        (i for i, a in enumerate(argv) if a.endswith("tdd_cycle_gate.py")),
+        None,
+    )
+    if gate_idx is None:
+        return False
+    # Nothing may follow the gate besides `reset`.
+    return gate_idx == len(argv) - 2
 
 
 def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: State) -> None:
@@ -732,6 +1415,10 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
 
     if tool_name == "Bash":
         command = str(tool_input.get("command", ""))
+        # Full mutation is coordinator-owned at RELEASE: deny it while a @s cycle
+        # is open (or RED in flight) in loop mode. Named-mutant inspection passes.
+        if _is_full_mutation_command(command) and not _full_mutation_allowed(state):
+            _deny(_FULL_MUTATION_DENIED)
         if _bash_writes_detected(command):
             _deny(
                 "🚫 Escritura directa Bash bloqueada en loop mode. "
@@ -771,7 +1458,7 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
             # New test while the current @s is still open (GREEN_SEEN/CLEAN):
             # close the cycle first — log VERDE + CLEAN + REFACTOR.
             if state.phase in (GREEN_SEEN, CLEAN):
-                _deny(_NEXT_TEST_FIX.format(phase=state.phase) + _BYPASS_HINT)
+                _deny(_NEXT_TEST_FIX.format(phase=state.phase))
 
             # Test edits require tdd-red seen (TDD Law 1) — UNLESS this is the
             # verification_preexisting path (tdd-green-ornith invoked with the
@@ -800,11 +1487,11 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
             #   - REFACTOR: allow if tdd-refactor seen
             #   - READY (post-cycle): allow if tdd-green or tdd-refactor seen
             if state.phase == RED_SEEN:
-                _deny(_ROJO_FIX + _BYPASS_HINT)
+                _deny(_ROJO_FIX)
             elif state.phase == GREEN_SEEN:
                 if "tdd-green" in state.skill_seen:
                     sys.exit(0)
-                _deny(_VERDE_FIX + _BYPASS_HINT)
+                _deny(_VERDE_FIX)
             elif state.phase == CODING:
                 if "tdd-green" in state.skill_seen:
                     sys.exit(0)
@@ -831,7 +1518,7 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
             else:  # READY
                 if "tdd-green" in state.skill_seen or "tdd-refactor" in state.skill_seen:
                     sys.exit(0)  # post-cycle: unlock persists
-                _deny(_RED_FIX.format(phase=state.phase) + _BYPASS_HINT)
+                _deny(_RED_FIX.format(phase=state.phase))
         sys.exit(0)
 
     sys.exit(0)
@@ -984,15 +1671,15 @@ def _handle_loop_post_tool_use(paths: list[str], tool_input: dict, state: State)
 def _handle_task_post_tool_use(tool_input: dict, state: State) -> bool:
     """Loop-mode PostToolUse for Task completion: advance gate when TDD phase subagents finish.
 
-    opencode ``task()`` runs subagent sessions (tdd-red-ornith, tdd-green-ornith, etc.)
-    in a fresh session that does NOT inherit the project's ``.opencode/plugins/``.
-    Consequently, the subagent's internal tool calls (Skill, Edit, Bash) do NOT
-    trigger the Python gate, so bitácora tokens written by the subagent never advance
-    the state machine on their own.
-
-    This fix bridges the gap: when the Task completes in the COORDINATOR's session,
-    the PostToolUse fires here and advances the gate to the state the subagent
-    should have reached.
+    Session isolation: a Task runs in a subagent session whose tool calls may or
+    may not be observed by the project's opencode plugin (the plugin registry is a
+    process-global in current opencode, so it often fires for subagent sessions
+    too — but that is not guaranteed across CLI/version). This handler makes the
+    state-machine advance deterministic REGARDLESS: whether or not the subagent's
+    bitácora tokens reached the Python gate, when the Task completes in the
+    coordinator's session the PostToolUse fires here and advances the gate to the
+    state the subagent should have reached. The transition is idempotent (a token
+    already applied inside the subagent session is simply not double-advanced).
 
     Architecture note: the subagent session may load the project hooks
     (edit/write/bash covered) but NOT the JS plugin that maps ``skill``/``task``
@@ -1063,8 +1750,7 @@ def _handle_task_post_tool_use(tool_input: dict, state: State) -> bool:
         if "tdd-refactor" not in state.skill_seen:
             state.skill_seen.append("tdd-refactor")
         _audit(
-            "TASK_POST: tdd-refactor-ornith completed → "
-            f"phase={state.phase}, cycle={state.cycle}"
+            f"TASK_POST: tdd-refactor-ornith completed → phase={state.phase}, cycle={state.cycle}"
         )
         return True
 
@@ -1365,11 +2051,20 @@ def main() -> int:
     except ValueError:
         return 0  # not a hook payload → do nothing
 
+    # Bind mode-derived values before any risky work so the error handler can
+    # always branch on them (a non-dict payload must not crash in loop mode).
+    loop_active = _is_loop_mode()
+
     try:
+        if not isinstance(payload, dict):
+            if loop_active:
+                _audit("ERROR (fail-closed deny): hook payload is not a JSON object")
+                sys.stderr.write("🚫 TDD gate error (fail-closed): payload is not a JSON object\n")
+                sys.exit(2)
+            return 0  # fail-open outside loop
         event = payload.get("hook_event_name", "")
         tool_name = payload.get("tool_name", "")
         tool_input = payload.get("tool_input", {}) or {}
-        loop_active = _is_loop_mode()
         story_key = _current_story_key()
 
         # Validate story key in loop mode (strict regex, no sanitize collision)
