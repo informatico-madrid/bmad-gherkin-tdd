@@ -137,6 +137,7 @@ def _create_sandbox(run_dir: Path, model_id: str) -> Path:
 def _run_opencode(sandbox: Path, model_id: str, timeout: int = 600) -> dict:
     """Run opencode with tdd-red-ornith agent on a sandbox."""
     start = time.time()
+    timeout_val = None if timeout == 0 else timeout
     try:
         result = subprocess.run(
             [
@@ -151,7 +152,7 @@ def _run_opencode(sandbox: Path, model_id: str, timeout: int = 600) -> dict:
             ],
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=timeout_val,
             cwd=str(sandbox),
         )
         elapsed = time.time() - start

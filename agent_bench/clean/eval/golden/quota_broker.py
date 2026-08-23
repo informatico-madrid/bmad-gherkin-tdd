@@ -114,8 +114,6 @@ def apply(
             continue
         if rec.key in apply._cache:
             rec.trace_id = apply._cache[rec.key]
-            accepted.append(rec)
-            total_weight += rec.weight
             continue
         try:
             sink.emit(rec.kind, _resolve_emit_key(rec, path_map), str(rec.score), timeout=timeout)
@@ -128,7 +126,7 @@ def apply(
         logger.info("accepted %s score=%s", rec.key, rec.score)
         print(f"dispatch {rec.key} {rec.kind}", flush=True)
         accepted.append(rec)
-        total_weight += rec.weight
+        total_weight += getattr(rec, "weight", rec.score)
 
     return (tuple(accepted), tuple(rejected), total_weight)
 

@@ -88,17 +88,19 @@ def evaluate_run(run_dir: Path) -> dict:
         violations = detect_all(model_dir)
         penalty = sum(v["severity"] for v in violations)
 
-        # Score formula: 0.30*vis + 0.45*hid + 0.15*quality + 0.10*mission - 5*penalty
+        # GREEN: behavioral correctness is the core. Hidden dominates; each
+        # behavioral bug (hidden failure) costs extra on top of hidden_pct.
         mission_ok = 1.0 if gold["fail"] == 0 and gold["pass"] > 0 else 0.0
         quality_pct = quality.get("pct", 0)
         if gold["pass"] == 0:
             quality_pct = 0.0
+        hidden_fail = hidden_total - hidden_hit
         score = 100 * (
-            0.30 * (visible_pct / 100)
-            + 0.45 * (hidden_pct / 100)
+            0.05 * (visible_pct / 100)
+            + 0.70 * (hidden_pct / 100)
             + 0.15 * (quality_pct / 100)
             + 0.10 * mission_ok
-        ) - 5 * penalty
+        ) - 5 * penalty - 3 * hidden_fail
         score = max(0, round(score, 1))
 
         row.update({

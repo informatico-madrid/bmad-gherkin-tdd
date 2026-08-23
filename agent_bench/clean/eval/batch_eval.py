@@ -59,11 +59,23 @@ def evaluate_run(run_dir):
         penalty = sum(v["severity"] for v in violations)
 
         mission_ok = 1.0 if gold["fail"] == 0 and gold["pass"] > 0 else 0.0
-        if gold["pass"] == 0: hidden_pct = 0.0
-
+        if gold["pass"] == 0:
+            hidden_pct = 0.0
+        anti_shell = 1.0 if penalty == 0 else max(0.0, 1.0 - 0.25 * len(violations))
+        leftover = 0
+        impl_txt = impl.read_text(encoding="utf-8")
+        if "import json" in impl_txt or "import math" in impl_txt or "import os" in impl_txt:
+            leftover += 1
+        if "a.b.c.d" in impl_txt:
+            leftover += 1
         score = 100 * (
-            0.40 * (gate_p / 100) + 0.35 * (hidden_pct / 100) + 0.15 * mission_ok + 0.10 * mission_ok
-        ) - 5 * penalty
+            0.25 * (gate_p / 100)
+            + 0.50 * (hidden_pct / 100)
+            + 0.15 * anti_shell
+            + 0.10 * mission_ok
+        ) - 5 * penalty - 8 * leftover
+        if hidden_pct < 95:
+            score *= 0.3
         score = max(0, round(score, 1))
 
         gate_checks = gate.get("checks", {})

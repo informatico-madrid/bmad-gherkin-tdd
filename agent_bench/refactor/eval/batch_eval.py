@@ -10,6 +10,7 @@ import yaml
 
 from agent_bench.refactor.eval.run_pytest import run_gold, run_hidden, run_cleaner_gate
 from agent_bench.refactor.eval.cheat_detect import detect_all
+from agent_bench.refactor.eval.design_score import design_pct as compute_design
 
 RUNS_BASE = Path(__file__).parent.parent.parent.parent / "_bmad-output" / "agent-bench" / "runs" / "refactor"
 _SURFACES_PATH = Path(__file__).parent / "surfaces.yaml"
@@ -57,11 +58,19 @@ def evaluate_run(run_dir):
         penalty = sum(v["severity"] for v in violations)
 
         mission_ok = 1.0 if gold["fail"] == 0 and gold["pass"] > 0 else 0.0
-        if gold["pass"] == 0: hidden_pct = 0.0
-
+        if gold["pass"] == 0:
+            hidden_pct = 0.0
+        seed = Path(__file__).parent / "seed" / "quota_broker.py"
+        design = compute_design(impl, seed) if seed.exists() else {"pct": 0.0}
+        design_p = design["pct"]
         score = 100 * (
-            0.45 * (hidden_pct / 100) + 0.25 * mission_ok + 0.15 * (gate_p / 100) + 0.15 * mission_ok
-        ) - 5 * penalty
+            0.35 * (hidden_pct / 100)
+            + 0.40 * (design_p / 100)
+            + 0.10 * (gate_p / 100)
+            + 0.15 * mission_ok
+        ) - 8 * penalty
+        if hidden_pct < 95 or gate_p < 100:
+            score *= 0.3
         score = max(0, round(score, 1))
 
         gate_checks = gate.get("checks", {})
@@ -74,6 +83,8 @@ def evaluate_run(run_dir):
             "hidden": f"{hidden['pass']}/{hidden_total}" if hidden_total else "0/0",
             "hidden_pct": hidden_pct,
             "gate": f"{gate_passed}/{gate_total}", "gate_pct": gate_p,
+            "design_pct": design_p,
+            "design": design,
             "cheat_penalty": penalty,
             "cheat_violations": [v["id"] for v in violations],
         })
@@ -87,12 +98,16 @@ def evaluate_run(run_dir):
 def print_table(scoreboard):
     rows = scoreboard["rows"]
     print(f"\nBench: {scoreboard['run_dir']}  Models: {scoreboard['models']}\n")
-    header = f"{'#':<3} {'model':<40} {'score':>6} {'vis':>6} {'hid':>6} {'gate':>6} {'pen':>4}"
-    print(header); print("-" * len(header))
+    header = f"{'#':<3} {'model':<40} {'score':>6} {'vis':>6} {'hid':>6} {'gate':>6} {'des':>5} {'pen':>4}"
+    print(header)
+    print("-" * len(header))
     for r in rows:
-        print(f"{r['rank']:<3} {r['model_dir']:<40} {r.get('score',0):>6} "
-              f"{r.get('visible','?'):>6} {r.get('hidden','?'):>6} "
-              f"{r.get('gate','?'):>6} {r.get('cheat_penalty',0):>4}")
+        print(
+            f"{r['rank']:<3} {r['model_dir']:<40} {r.get('score', 0):>6} "
+            f"{r.get('visible', '?'):>6} {r.get('hidden', '?'):>6} "
+            f"{r.get('gate', '?'):>6} {r.get('design_pct', 0):>5} "
+            f"{r.get('cheat_penalty', 0):>4}"
+        )
     print()
 
 

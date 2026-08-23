@@ -35,14 +35,12 @@ def _run_pytest_in_dir(test_path: Path, cwd: Path, timeout: int = 120) -> dict:
 def _parse_counts(stdout: str) -> tuple[int, int]:
     pass_count = fail_count = 0
     for line in stdout.splitlines():
-        if "passed" in line:
-            parts = line.split()
-            for i, p in enumerate(parts):
-                if p == "passed": pass_count = int(parts[i - 1])
-        if "failed" in line:
-            parts = line.split()
-            for i, p in enumerate(parts):
-                if p == "failed": fail_count = int(parts[i - 1])
+        tok = line.replace(",", " ").split()
+        for i, p in enumerate(tok):
+            if p == "passed" and i > 0 and tok[i - 1].isdigit():
+                pass_count = int(tok[i - 1])
+            if p == "failed" and i > 0 and tok[i - 1].isdigit():
+                fail_count = int(tok[i - 1])
     return pass_count, fail_count
 
 
@@ -62,10 +60,13 @@ def run_hidden(sandbox: Path) -> dict:
         if not src_dir.exists():
             return {"status": "no_impl", "pass": 0, "fail": 0, "error": "src/ missing"}
         shutil.copytree(src_dir, tmp_path / "src")
-        shutil.copy(HIDDEN_DIR / "test_heldout.py", tmp_path / "test_heldout.py")
+        for name in ("test_heldout.py", "test_heldout_hard.py"):
+            src_t = HIDDEN_DIR / name
+            if src_t.exists():
+                shutil.copy(src_t, tmp_path / name)
         shutil.copy(FIXTURE_DIR / "tests" / "conftest.py", tmp_path / "conftest.py")
         (tmp_path / "pytest.ini").write_text("[pytest]\npythonpath = src\n")
-        r = _run_pytest_in_dir(tmp_path / "test_heldout.py", tmp_path)
+        r = _run_pytest_in_dir(tmp_path, tmp_path)
         p, f = _parse_counts(r["stdout"])
         return {"status": r["status"], "pass": p, "fail": f, "returncode": r["returncode"]}
 

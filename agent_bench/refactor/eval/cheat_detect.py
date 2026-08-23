@@ -66,10 +66,9 @@ def detect_all(sandbox: Path) -> list[dict]:
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef):
                     body = [n for n in node.body if not isinstance(n, (ast.Pass, ast.Expr)) and not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant))]
-                    if len(body) <= 1 and node.name.startswith("_"):
+                    if len(body) <= 2 and node.name.startswith("_"):
                         violations.append({"id": "empty_extract", "severity": 1,
-                                           "detail": f"{node.name}() body ≤1 stmt"})
-                        break
+                                           "detail": f"{node.name}() body ≤2 stmts"})
         except SyntaxError:
             pass
 

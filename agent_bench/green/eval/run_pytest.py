@@ -60,16 +60,12 @@ def run_gold(sandbox: Path) -> dict:
     pass_count = 0
     fail_count = 0
     for line in r["stdout"].splitlines():
-        if "passed" in line:
-            parts = line.split()
-            for i, p in enumerate(parts):
-                if p == "passed":
-                    pass_count = int(parts[i - 1])
-        if "failed" in line:
-            parts = line.split()
-            for i, p in enumerate(parts):
-                if p == "failed":
-                    fail_count = int(parts[i - 1])
+        tok = line.replace(",", " ").split()
+        for i, p in enumerate(tok):
+            if p == "passed" and i > 0 and tok[i - 1].isdigit():
+                pass_count = int(tok[i - 1])
+            if p == "failed" and i > 0 and tok[i - 1].isdigit():
+                fail_count = int(tok[i - 1])
 
     return {
         "status": r["status"],
@@ -97,27 +93,24 @@ def run_hidden(sandbox: Path) -> dict:
             shutil.copy(conftest, tmp_path / "conftest.py")
 
         # Copy hidden test
-        hidden_test = HIDDEN_DIR / "test_heldout.py"
-        shutil.copy(hidden_test, tmp_path / "test_heldout.py")
+        for name in ("test_heldout.py", "test_heldout_hard.py"):
+            src_t = HIDDEN_DIR / name
+            if src_t.exists():
+                shutil.copy(src_t, tmp_path / name)
 
-        # Create pytest.ini
         (tmp_path / "pytest.ini").write_text("[pytest]\npythonpath = src\n")
 
-        r = _run_pytest_in_dir(tmp_path / "test_heldout.py", tmp_path)
+        r = _run_pytest_in_dir(tmp_path, tmp_path)
 
         pass_count = 0
         fail_count = 0
         for line in r["stdout"].splitlines():
-            if "passed" in line:
-                parts = line.split()
-                for i, p in enumerate(parts):
-                    if p == "passed":
-                        pass_count = int(parts[i - 1])
-            if "failed" in line:
-                parts = line.split()
-                for i, p in enumerate(parts):
-                    if p == "failed":
-                        fail_count = int(parts[i - 1])
+            tok = line.replace(",", " ").split()
+            for i, p in enumerate(tok):
+                if p == "passed" and i > 0 and tok[i - 1].isdigit():
+                    pass_count = int(tok[i - 1])
+                if p == "failed" and i > 0 and tok[i - 1].isdigit():
+                    fail_count = int(tok[i - 1])
 
         return {
             "status": r["status"],
