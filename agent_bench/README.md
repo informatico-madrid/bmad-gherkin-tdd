@@ -1,93 +1,97 @@
-# agent_bench — Benchmark suite for OpenCode agents
+# agent_bench — Benchmark suite for OpenCode TDD agents
 
-Aislado del módulo de producción (`bmad-gherkin-tdd`). No se instala, no se toca el gate,
-no cambia el workflow TDD. Su único propósito: **evaluar agentes** (de momento el RED de TDD)
-contra varios modelos para elegir el más barato-efectivo por fase.
+Aislado del módulo de producción. No se instala, no se toca el gate, no cambia el workflow TDD.
+Evalúa agentes de las 4 fases TDD contra varios modelos para elegir el más barato-efectivo por fase.
 
-## Uso previsto (skill-driven)
+## Ciclo TDD cubierto
 
-En una sesión de OpenCode:
-1. Invocar la skill **`agent-bench-red`** → pregunta qué modelos, lanza el agente RED en
-   paralelo con cada uno sobre el mismo contrato sintético.
-2. Al terminar, invoca **`agent-bench-red-eval`** → scoreboard mecánico + juez LLM que
-   contrasta cada test contra los objetivos del RED.
+| Fase | Agente | Benchmark | Qué evalúa |
+|------|--------|-----------|------------|
+| RED | `tdd-red-ornith` | `agent_bench/red/` | Texto del test (AST × 51 superficies) |
+| GREEN | `tdd-green-ornith` | `agent_bench/green/` | Impl vs contrato + hidden + quality local |
+| CLEAN | `tdd-clean-ornith` | `agent_bench/clean/` | cleaner-gate + coverage + anti-cascarón |
+| REFACTOR | `tdd-refactor-ornith` | `agent_bench/refactor/` | Diseño mejorado + gate PASS + hidden PASS |
 
-Restricción técnica: `task()` no acepta `model`, así que el mismo agente con distintos
-modelos se lanza vía `opencode run --model X --agent tdd-red-ornith`, que `launch.py`
-paraleliza internamente (ThreadPoolExecutor).
+## Flujo por fase (skill-driven)
+
+Cada fase tiene 2 skills: orchestration + evaluation. Workflow idéntico:
+
+1. **Paso 1-2**: Resolver modelos / preguntar (skip si ya los dio)
+2. **Paso 3**: `python3 -m agent_bench.<phase>.launch --models ... --timeout 0`
+3. **Paso 4**: `python3 -m agent_bench.<phase>.eval.batch_eval --latest`
+4. **Paso 5**: `python3 -m agent_bench.<phase>.eval.judge --latest --judge-model <model>`
+5. **Paso 6**: Reportar tabla + veredictos
 
 ## Estructura
 
 ```
 agent_bench/
+  common/__init__.py              # shared: resolve_models, slugify, run_opencode
   README.md
+
   red/
-    fixtures/red-hard/          # fixture sintético (Quota Broker), agnóstico de dominio
-      PRODUCT-INTENT.md         # PRODUCT-INTENT ficticio (FIXTURE≠TARGET)
-      tests/contracts/red-hard.feature   # 4 @s APPROVED
-      src/quota_broker.py       # hueco (solo firmas + NotImplementedError)
-      _bmad/custom/tdd-red.toml # persistent facts del sandbox
-      .opencode/opencode.json   # agent RED como PRIMARY (para opencode run --agent)
-      bitacora.md
-    eval/
-      surfaces.yaml             # matriz canónica (51 superficies de mutantes)
-      static_score.py           # scorer estático (AST-based)
-      batch_eval.py             # evalúa todos los modelos de un run + scoreboard
-      judge.py                  # juez LLM (contrasta contra objetivos del RED)
-      tests/test_static_score.py
-    launch.py                   # resetea fixture, crea sandboxes, lanza en paralelo
+    fixtures/red-hard/            # hueco (NotImplementedError)
+    eval/surfaces.yaml            # 51 superficies AST
+    eval/static_score.py          # scorer estático
+    launch.py
+
+  green/
+    fixtures/green-hard/          # test gold + stub + 8 @s contract
+    eval/golden/quota_broker.py   # reference impl
+    eval/hidden/test_heldout.py   # 37 tests held-out
+    eval/surfaces.yaml            # 24 conductual + 16 quality + 12 cheat
+    eval/quality_local.py         # AST checkers (no HQG dependency)
+    launch.py
+
+  clean/
+    fixtures/clean-hard/          # semilla SUCIA (tests pass, gate FAIL)
+    fixtures/clean-hard/scripts/  # cleaner_gate.py + principles.py + scan_mutation_sites.py
+    eval/golden/quota_broker.py   # clean reference (gate PASS)
+    eval/hidden/test_heldout.py   # 37 tests held-out
+    launch.py
+
+  refactor/
+    fixtures/refactor-hard/       # semilla funcional (gate PASS, diseño pobre)
+    eval/golden/quota_broker.py   # refactored reference
+    eval/hidden/test_heldout.py   # 37 tests held-out
+    launch.py
 ```
 
-## Ejecución manual (equivalente a las skills)
+## Closed loop (antes de lanzar modelos)
 
-```bash
-# 1. Lanzar en paralelo contra N modelos (timeout 600s c/u)
-python3 -m agent_bench.red.launch --models nan/deepseek-v4-flash,nan/mimo-v2.5 --timeout 600
+Cada bench tiene que pasar esta tabla antes de ser usado:
 
-# 2. Scoreboard mecánico del último run
-python3 -m agent_bench.red.eval.batch_eval --latest
+| Estado | Tests | Hidden | Gate | Score |
+|--------|-------|--------|------|-------|
+| stub/semilla FAIL | 0% | 0% | FAIL | 0 |
+| golden PASS | 100% | 100% | PASS | alto |
 
-# 3. Juez LLM (modelo juez distinto y fuerte)
-python3 -m agent_bench.red.eval.judge --latest --judge-model nan/mimo-v2.5
+Si algún estado no se cumple → el bench no está listo.
 
-# Dry run (solo crear sandboxes, sin lanzar opencode)
-python3 -m agent_bench.red.launch --models nan/mimo-v2.5 --dry-run
-```
+## Evaluación por fase
 
-Salidas por run en `_bmad-output/agent-bench/runs/<id>/`:
-`manifest.json` (estado/elapsed por modelo), `scoreboard.json` (mecánico),
-`judge_verdicts.json` (juez), y `<model-slug>/tests/unit/test_red_hard.py` (test generado).
+**RED**: 100% estática. AST sobre `surfaces.yaml`. No ejecuta pytest contra impl.
 
-## Evaluación
+**GREEN**: Gold tests (gate) + hidden tests (ranking) + quality local (AST) + cheat detect.
+Fórmula: `0.30*vis + 0.45*hid + 0.15*quality + 0.10*mission - 5*penalty`.
 
-- **100% estática** (capa mecánica): AST sobre la matriz `surfaces.yaml`. No ejecuta pytest
-  contra implementación (no hay impl; el SUT es un hueco). La calidad se mide en el TEXTO del test.
-- **Operadores mutmut §2**: números, strings XX-wrap, comparaciones, bool, in/is, break/continue,
-  return-None, defaults, kwargs, aritmética.
-- **Técnicas §4**: densas, fronteras exactas, strings exactos, spies, defaults-sin-kwarg,
-  acumulador asimétrico, contar iteraciones, truth table TF/FT, hypothesis, caplog, excepción tipada.
-- **H-cases**: H1 wiring+is, H2 clock, H3 log, H4 truth table, H6 fallback, H7 argv-order,
-  H8 stop-count, H10 cache, H11 límite, H14 XX-wrap, H15 None/0/False, H18 default,
-  H19 unit-only, H20 pathmap.
-- **Equivalentes §5**: A iter-count, B límite público, C clave ausente, D inalcanzable,
-  E timeout-spy, G sentinel `__eq__`, H log-msg. (F roundtrip es `llm_only`, fuera del denominator.)
-- **Forbiddens** (penalizan): loose `is not None`, loose `'x' in str(...)`, `len(x) > 0`,
-  sample leak (`alpha`/`beta`/`quota-lab`), MagicMock como iterable.
+**CLEAN**: cleaner-gate (KISS/DRY/YAGNI/LoD/CoI/scan) + hidden + anti-cascarón.
+Fórmula: `0.40*gate + 0.35*hidden + 0.15*mission + 0.10*mission - 5*penalty`.
 
-## Robustez (lecciones aprendidas durante el desarrollo)
+**REFACTOR**: hidden (design no puede romper) + gate (no puede romper) + juez (design improvement).
+Fórmula: `0.45*hidden + 0.25*mission + 0.15*gate + 0.15*mission - 5*penalty`.
 
-- **`_reset_fixture()`**: limpia el test-slot del fixture antes de cada run. Un fixture
-  contaminado (con `test_red_hard.py` residual) hacía que el agente no reescribiera y todos
-  los modelos puntuaran el mismo archivo viejo.
-- **`_clean_test_slot()` por sandbox**: garantiza slate limpio aunque el fixture se contamine.
-- **Agente RED como `primary`**: `opencode run --agent` rechaza subagentes y cae al default
-  (ignorando `--model`). Se hizo primary para que el bench use el agente y modelo correctos.
-- **Detección de fallos de misión**: `no_output` (el modelo no escribió test) y `timeout` se
-  reportan como datos válidos, no como errores del bench.
+## Robustez
 
-## Lo que NO hace este módulo
+- **`setsid nohup`**: lanzar en background para que no se cancele por interrupción.
+- **`--timeout 0`**: sin timeout para modelos lentos (bunker-local).
+- **Cache reset**: autouse fixture en hidden tests para evitar leakage entre tests.
+- **FIXTURE≠TARGET**: sin `alpha`/`beta`/`quota-lab` como expected values.
+- **No toca producción**: ni `hooks/`, ni `plugins/`, ni `installer.py`, ni skills TDD.
 
-- No toca `hooks/`, `opencode/plugins/`, `installer.py`, `templates/`.
-- No añade skills al payload de instalación.
-- No ejecuta mutmut ni golden impl.
+## Lo que NO hace
+
+- No ejecuta mutmut (RELEASE es del coordinador).
+- No encadena salidas de un modelo como input de otro.
+- No instala skills en el wheel.
 - No modifica `opencode/agents/opencode.json.template`.

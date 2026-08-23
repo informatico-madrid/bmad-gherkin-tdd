@@ -1,0 +1,167 @@
+surfaces:
+  # ── Gate: cleaner-gate checks ──────────────────────────────────────
+  - id: gate_kiss
+    category: gate
+    description: "KISS: complexity ≤10, nesting ≤4, arity ≤5"
+  - id: gate_dry
+    category: gate
+    description: "DRY: no duplicate 6+ line blocks"
+  - id: gate_yagni
+    category: gate
+    description: "YAGNI: no unused imports, no dead code"
+  - id: gate_lod
+    category: gate
+    description: "LoD: attribute chains ≤3"
+  - id: gate_coi
+    category: gate
+    description: "CoI: inheritance depth ≤2"
+  - id: gate_scan
+    category: gate
+    description: "scan_mutation_sites: ≤ threshold"
+  - id: gate_coverage
+    category: gate
+    description: "Coverage 100% in diff files"
+  - id: gate_pytest
+    category: gate
+    description: "pytest PASS"
+
+  # ── Anti-shell (structural) ────────────────────────────────────────
+  - id: no_empty_extract
+    category: anti_shell
+    description: "No _fn() with body ≤1 stmt"
+  - id: no_pass_body
+    category: anti_shell
+    description: "No bare pass in refactored functions"
+  - id: no_pragma_mutate
+    category: anti_shell
+    description: "No # pragma: no mutate"
+  - id: no_new_tests
+    category: anti_shell
+    description: "No new test files"
+  - id: no_test_tamper
+    category: anti_shell
+    description: "Gold test hash matches"
+  - id: behavior_lock
+    category: anti_shell
+    description: "Hidden tests must not decrease vs semilla"
+
+  # ── Conductual (hidden tests) ──────────────────────────────────────
+  - id: thr_inclusive
+    category: conductual
+    held_out: true
+  - id: truth_table_1
+    category: conductual
+    held_out: true
+  - id: stop_first
+    category: conductual
+    held_out: true
+  - id: return_shape
+    category: conductual
+    held_out: true
+  - id: identity
+    category: conductual
+    held_out: true
+  - id: emit_wiring
+    category: conductual
+    held_out: true
+  - id: default_timeout
+    category: conductual
+    held_out: true
+  - id: normalize_falsy
+    category: conductual
+    held_out: true
+  - id: empty_records
+    category: conductual
+    held_out: true
+  - id: accumulator
+    category: conductual
+    held_out: true
+  - id: clock_once
+    category: conductual
+    held_out: true
+  - id: cache_same_key
+    category: conductual
+    held_out: true
+  - id: skip_sentinel
+    category: conductual
+    held_out: true
+  - id: path_map
+    category: conductual
+    held_out: true
+  - id: absent_key
+    category: conductual
+    held_out: true
+  - id: sink_error
+    category: conductual
+    held_out: true
+  - id: type_error_propagates
+    category: conductual
+    held_out: true
+  - id: log_exact
+    category: conductual
+    held_out: true
+  - id: capsys_exact
+    category: conductual
+    held_out: true
+  - id: max_emit
+    category: conductual
+    held_out: true
+  - id: trace_roundtrip
+    category: conductual
+    held_out: true
+  - id: or_compound
+    category: conductual
+    held_out: true
+  - id: public_limit
+    category: conductual
+    held_out: true
+  - id: cache_isolation
+    category: conductual
+    held_out: true
+  - id: kind_membership
+    category: conductual
+    held_out: true
+
+  # ── Quality ────────────────────────────────────────────────────────
+  - id: solid_srp
+    category: quality
+  - id: solid_ocp
+    category: quality
+  - id: solid_lsp
+    category: quality
+  - id: solid_isp
+    category: quality
+  - id: solid_dip
+    category: quality
+  - id: dry
+    category: quality
+  - id: kiss
+    category: quality
+  - id: yagni
+    category: quality
+  - id: lod
+    category: quality
+  - id: coi
+    category: quality
+  - id: ap05_magic
+    category: quality
+  - id: ap06_long_method
+    category: quality
+  - id: ap08_long_params
+    category: quality
+  - id: ap20_nesting
+    category: quality
+
+  # ── Cheat ──────────────────────────────────────────────────────────
+  - id: mock_in_sut
+    category: cheat
+  - id: bare_except
+    category: cheat
+  - id: hardcode_gold_set
+    category: cheat
+  - id: sample_leak
+    category: cheat
+  - id: wrote_tests
+    category: cheat
+  - id: extra_public
+    category: cheat
