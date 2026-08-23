@@ -22,7 +22,7 @@ description: TDD RED Phase write failing test with PERSISTENT_PROMPT_CONSTRAINTS
 
 1. Nombre descriptivo: `test_{scenario}_{expected_behavior}`
 2. Setup mínimo: solo lo necesario para el test
-3. Assertion clara: un solo assertion por test (no assertion roulette)
+3. Aserciones densas: múltiples aserciones exactas por test — estructura completa, cardinalidad, tipo, frontera, spy completo (nunca un solo assert vago)
 4. Boundary testing: incluir casos límite
 5. Edge cases: manejar `null`, `empty`, `invalid` input
 

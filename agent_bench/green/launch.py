@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""launch.py — Launch TDD GREEN bench against multiple models.
+
+Copies the fixture to a run directory, then invokes `opencode run --pure`
+for each selected model with the tdd-green-ornith agent.
+
+Usage:
+    python -m agent_bench.green.launch --models nan/deepseek-v4-flash,cefprovider/bunker-local
+    python -m agent_bench.green.launch --models xai/grok-4.6 --timeout 0  # no timeout
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+FIXTURE_DIR = Path(__file__).parent / "fixtures" / "green-hard"
+RUNS_BASE = Path(__file__).parent.parent.parent / "_bmad-output" / "agent-bench" / "runs" / "green"
+OPENCODE_CONFIG = Path.home() / ".config" / "opencode" / "opencode.json"
+
+KNOWN_PROVIDERS = [
+    "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-flash-0731",
+    "cefprovider/bunker-local",
+    "nan/mimo-v2.5",
+    "nan/deepseek-v4-flash",
+    "nan/gemma4",
+    "tokenrouter/qwen/qwen3.7-max",
+    "tokenrouter/grok-4.6",
+    "tokenrouter/deepseek/deepseek-v4-flash",
+    "tencent-tokenhub/glm-5.3",
+    "tencent-tokenhub/deepseek-v4-flash",
+    "google/gemini-3.7-flash",
+    "xai/grok-4.6",
+]
+
+GREEN_PROMPT = (
+    "Load skill tdd-green. "
+    "Contract: tests/contracts/green-hard.feature — scenarios @s1 through @s8. "
+    "The gold test already exists: tests/unit/test_green_hard.py (DO NOT EDIT IT). "
+    "Implement src/quota_broker.py so ALL gold tests PASS. "
+    "Follow SPEC-PINS.md for semantic pins. "
+    "Follow STANDARDS.md for code quality (SOLID/DRY/YAGNI/KISS). "
+    "FIXTURE≠TARGET: do not hardcode gold literals (3,7,50,51,99). "
+    "Use named constants, guard clauses, specific exceptions. "
+    "Minimize code. No features extra. No refactoring. "
+    "Confirm pytest PASS. Update bitácora to VERDE. STOP."
+)
+
+
+def _resolve_models(model_args: str | None) -> list[str]:
+    if model_args:
+        return [m.strip() for m in model_args.split(",") if m.strip()]
+    if OPENCODE_CONFIG.exists():
+        try:
+            data = json.loads(OPENCODE_CONFIG.read_text(encoding="utf-8"))
+            providers = data.get("provider", {})
+            models = []
+            for prov_name, prov_data in providers.items():
+                models_config = prov_data.get("models", {})
+                for model_name in models_config:
+                    models.append(f"{prov_name}/{model_name}")
+            if models:
+                return models
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return KNOWN_PROVIDERS
+
+
+def _slugify(model_id: str) -> str:
+    return model_id.replace("/", "__").replace(" ", "_").lower()
+
+
+def _clean_impl_slot(base: Path) -> None:
+    """Clear pycache only. The fixture stub must remain; sandboxes copy it."""
+    for pycache in base.rglob("__pycache__"):
+        shutil.rmtree(pycache, ignore_errors=True)
+
+
+def _reset_fixture() -> None:
+    """Clean the fixture's impl slot + bitácora before copying."""
+    _clean_impl_slot(FIXTURE_DIR)
+    bitacora = FIXTURE_DIR / "bitacora.md"
+    if bitacora.exists():
+        bitacora.write_text(
+            "# Bitácora TDD — green-hard-001\n\n| @s | Fase | Status | Test file |\n|----|------|--------|-----------|\n",
+            encoding="utf-8",
+        )
+    # Restore gold test from canonical copy
+    gold_src = Path(__file__).parent / "eval" / "golden" / "quota_broker.py"
+    gold_dst = FIXTURE_DIR / "src" / "quota_broker.py"
+    # Don't restore — we want the stub there for the sandbox
+
+
+def _create_sandbox(run_dir: Path, model_id: str) -> Path:
+    """Copy fixture to a sandbox directory for one model."""
+    slug = _slugify(model_id)
+    sandbox = run_dir / slug
+    if sandbox.exists():
+        shutil.rmtree(sandbox)
+    shutil.copytree(FIXTURE_DIR, sandbox)
+
+    # Defensive clean: guarantee the agent starts from the stub.
+    _clean_impl_slot(sandbox)
+
+    # Restore stub (not golden impl)
+    stub_src = FIXTURE_DIR / "src" / "quota_broker.py"
+    stub_dst = sandbox / "src" / "quota_broker.py"
+    if stub_src.exists():
+        shutil.copy2(stub_src, stub_dst)
+
+    bitacora = sandbox / "bitacora.md"
+    if bitacora.exists():
+        bitacora.write_text(
+            "# Bitácora TDD — green-hard-001\n\n| @s | Fase | Status | Test file |\n|----|------|--------|-----------|\n",
+            encoding="utf-8",
+        )
+    return sandbox
+
+
+def _run_opencode(sandbox: Path, model_id: str, timeout: int = 1800) -> dict:
+    """Run opencode with tdd-green-ornith agent on a sandbox."""
+    start = time.time()
+    timeout_val = None if timeout == 0 else timeout
+    try:
+        result = subprocess.run(
+            [
+                "opencode", "run",
+                "--pure",
+                "--dir", str(sandbox),
+                "--agent", "tdd-green-ornith",
+                "--model", model_id,
+                "--auto",
+                "--format", "json",
+                GREEN_PROMPT,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_val,
+            cwd=str(sandbox),
+        )
+        elapsed = time.time() - start
+        return {
+            "model": model_id,
+            "status": "completed" if result.returncode == 0 else "failed",
+            "returncode": result.returncode,
+            "elapsed_s": round(elapsed, 1),
+            "stdout": result.stdout[-2000:] if result.stdout else "",
+            "stderr": result.stderr[-2000:] if result.stderr else "",
+        }
+    except subprocess.TimeoutExpired:
+        elapsed = time.time() - start
+        return {
+            "model": model_id,
+            "status": "timeout",
+            "returncode": -1,
+            "elapsed_s": round(elapsed, 1),
+            "stdout": "",
+            "stderr": f"Timeout after {timeout}s",
+        }
+    except FileNotFoundError:
+        return {
+            "model": model_id,
+            "status": "error",
+            "returncode": -1,
+            "elapsed_s": 0,
+            "stdout": "",
+            "stderr": "opencode CLI not found",
+        }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Launch TDD GREEN bench")
+    parser.add_argument("--models", "-m", help="Comma-separated model IDs")
+    parser.add_argument("--timeout", "-t", type=int, default=1800,
+                        help="Timeout per model in seconds (0 = no timeout, default 1800)")
+    parser.add_argument("--dry-run", "-n", action="store_true",
+                        help="Print sandboxes without running")
+    parser.add_argument("--parallel", "-p", type=int, default=0,
+                        help="Max parallel launches (default: all models)")
+    args = parser.parse_args()
+
+    models = _resolve_models(args.models)
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    run_dir = RUNS_BASE / run_id
+
+    print(f"Run ID:    {run_id}")
+    print(f"Run dir:   {run_dir}")
+    print(f"Models:    {len(models)}")
+    print(f"Fixture:   {FIXTURE_DIR}")
+    print(f"Timeout:   {'unlimited' if args.timeout == 0 else f'{args.timeout}s'}")
+    print()
+
+    if not run_dir.exists():
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+    _reset_fixture()
+
+    sandboxes: list[tuple[str, Path]] = []
+    for model_id in models:
+        sandbox = _create_sandbox(run_dir, model_id)
+        sandboxes.append((model_id, sandbox))
+        print(f"  sandbox: {sandbox.name} → {model_id}")
+
+    print()
+
+    if args.dry_run:
+        print("[dry-run] Not launching opencode. Sandboxes created.")
+        return
+
+    max_workers = args.parallel if args.parallel > 0 else len(sandboxes)
+    print(f"[launch] {len(sandboxes)} models, max {max_workers} in parallel")
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_model = {
+            pool.submit(_run_opencode, sandbox, model_id, args.timeout): model_id
+            for model_id, sandbox in sandboxes
+        }
+        for future in as_completed(future_to_model):
+            model_id = future_to_model[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                result = {
+                    "model": model_id,
+                    "status": "error",
+                    "returncode": -1,
+                    "elapsed_s": 0,
+                    "stdout": "",
+                    "stderr": f"launcher exception: {exc!r}",
+                }
+            results.append(result)
+            print(f"[done]   {model_id}: {result['status']} ({result['elapsed_s']}s)", flush=True)
+
+    order = {m: i for i, m in enumerate(models)}
+    results.sort(key=lambda r: order.get(r["model"], len(models)))
+
+    manifest_path = run_dir / "manifest.json"
+    manifest = {
+        "run_id": run_id,
+        "phase": "green",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "fixture": str(FIXTURE_DIR),
+        "timeout": args.timeout,
+        "results": results,
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(f"\nManifest: {manifest_path}")
+
+    completed = sum(1 for r in results if r["status"] == "completed")
+    failed = sum(1 for r in results if r["status"] == "failed")
+    timeouts = sum(1 for r in results if r["status"] == "timeout")
+    errors = sum(1 for r in results if r["status"] == "error")
+    print(f"\nSummary: {completed} completed, {failed} failed, {timeouts} timeout, {errors} error")
+
+
+if __name__ == "__main__":
+    main()

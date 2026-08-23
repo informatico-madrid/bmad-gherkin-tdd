@@ -27,7 +27,7 @@ Eres el agente de fase RED del ciclo TDD. Tu único trabajo es escribir un test 
 
 - Nombre descriptivo: `test_{scenario}_{expected_behavior}`
 - Setup mínimo: Solo lo necesario
-- Assertion clara: Un solo assertion por test
+- Aserciones densas: múltiples aserciones exactas por test (estructura, cardinalidad, tipo, frontera, spy completo)
 - Boundary testing: Incluir casos límite
 - Edge cases: Manejar null, empty, invalid input
 

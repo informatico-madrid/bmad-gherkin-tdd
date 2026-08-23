@@ -1,0 +1,250 @@
+# surfaces.yaml — Canonical list of surfaces for GREEN bench.
+#
+# Each surface = one row in the evaluation matrix.
+# id: unique identifier
+# category: conductual | quality | cheat
+# description: human-readable
+# held_out: whether this has a held-out test variant
+#
+# Conductual surfaces are tested by running pytest against the impl.
+# Quality surfaces are checked by HQG Tier A checkers.
+# Cheat surfaces are checked by cheat_detect.py.
+
+surfaces:
+  # ── Conductual: held-out tests (hidden suite) ──────────────────────
+  - id: thr_inclusive
+    category: conductual
+    description: "P1: threshold inclusivity (>= not >)"
+    held_out: true
+    held_out_values: "threshold=80, scores 79/80/81"
+
+  - id: truth_table_1
+    category: conductual
+    description: "P2: truth table (active AND visible) — TT/TF/FT/FF"
+    held_out: true
+    held_out_values: "threshold=80, scores 90"
+
+  - id: stop_first
+    category: conductual
+    description: "P3: stop_on_first — break after first accept"
+    held_out: true
+
+  - id: return_shape
+    category: conductual
+    description: "P4: return (tuple, tuple, int)"
+    held_out: true
+
+  - id: identity
+    category: conductual
+    description: "P5: object identity (is not copy)"
+    held_out: true
+
+  - id: emit_wiring
+    category: conductual
+    description: "P6: emit(kind, key, str(score), timeout=)"
+    held_out: true
+
+  - id: default_timeout
+    category: conductual
+    description: "P7: default timeout 600 via spy"
+    held_out: true
+
+  - id: normalize_falsy
+    category: conductual
+    description: "P8: normalize(None/0/False) separate assertions"
+    held_out: true
+
+  - id: empty_records
+    category: conductual
+    description: "P9: empty/None records → ValueError exact msg"
+    held_out: true
+
+  - id: accumulator
+    category: conductual
+    description: "P10: asymmetric accumulator (sum ≠ product)"
+    held_out: true
+
+  - id: clock_once
+    category: conductual
+    description: "P11: clock.now() called once per apply"
+    held_out: true
+
+  - id: cache_same_key
+    category: conductual
+    description: "P12: cache per key — 2nd call same key no re-emit"
+    held_out: true
+
+  - id: skip_sentinel
+    category: conductual
+    description: "P13: SKIP via is, decoy __eq__ doesn't fool"
+    held_out: true
+
+  - id: path_map
+    category: conductual
+    description: "P14: path_map on spec, None = identity"
+    held_out: true
+
+  - id: absent_key
+    category: conductual
+    description: "P15: absent key → default path (Tipo C)"
+    held_out: true
+
+  - id: sink_error
+    category: conductual
+    description: "P16: SinkError → rejected fallback"
+    held_out: true
+
+  - id: type_error_propagates
+    category: conductual
+    description: "P16b: TypeError NOT swallowed"
+    held_out: true
+
+  - id: log_exact
+    category: conductual
+    description: "P17: caplog == exact message (not substring)"
+    held_out: true
+
+  - id: capsys_exact
+    category: conductual
+    description: "P18: capsys exact dispatch line"
+    held_out: true
+
+  - id: max_emit
+    category: conductual
+    description: "P19: max_emit bounds the loop"
+    held_out: true
+
+  - id: trace_roundtrip
+    category: conductual
+    description: "P20: trace_id write+read (Tipo F)"
+    held_out: true
+
+  - id: or_compound
+    category: conductual
+    description: "P21: mode==strict or flag — 2nd compound truth table"
+    held_out: true
+
+  - id: public_limit
+    category: conductual
+    description: "P22: public API at boundary (H11/Tipo B)"
+    held_out: true
+
+  - id: cache_isolation
+    category: conductual
+    description: "P23: cache per-key, different key independent"
+    held_out: true
+
+  - id: kind_membership
+    category: conductual
+    description: "@s5: deny wins even when kind is also in allow"
+    held_out: true
+
+  # ── Quality: HQG Tier A (deterministic AST) ───────────────────────
+  - id: solid_srp
+    category: quality
+    description: "S — Single Responsibility (no god class/function)"
+
+  - id: solid_ocp
+    category: quality
+    description: "O — Open/Closed (extensible without modification)"
+
+  - id: solid_lsp
+    category: quality
+    description: "L — Liskov Substitution (no narrowed types)"
+
+  - id: solid_isp
+    category: quality
+    description: "I — Interface Segregation (no fat interfaces)"
+
+  - id: solid_dip
+    category: quality
+    description: "D — Dependency Inversion (no direct concrete deps)"
+
+  - id: dry
+    category: quality
+    description: "DRY — No duplicate 6+ line blocks"
+
+  - id: kiss
+    category: quality
+    description: "KISS — complexity ≤10, nesting ≤4, arity ≤5"
+
+  - id: yagni
+    category: quality
+    description: "YAGNI — no unused imports, no dead code"
+
+  - id: lod
+    category: quality
+    description: "LoD — attribute chains ≤3"
+
+  - id: coi
+    category: quality
+    description: "CoI — inheritance depth ≤2"
+
+  - id: ap05_magic
+    category: quality
+    description: "AP05: no magic numbers (named constants)"
+
+  - id: ap06_long_method
+    category: quality
+    description: "AP06: no function >100 lines"
+
+  - id: ap08_long_params
+    category: quality
+    description: "AP08: no function >5 parameters"
+
+  - id: ap18_switch
+    category: quality
+    description: "AP18: no switch >5 branches"
+
+  - id: ap20_nesting
+    category: quality
+    description: "AP20: no nesting >5 levels"
+
+  - id: ap22_dead_code
+    category: quality
+    description: "AP22: no unreachable code"
+
+  # ── Cheat: discipline checks ──────────────────────────────────────
+  - id: test_tamper
+    category: cheat
+    description: "Gold test hash matches gold.sha256"
+
+  - id: contract_tamper
+    category: cheat
+    description: "Feature file unchanged"
+
+  - id: no_impl
+    category: cheat
+    description: "SUT is not the hollow stub"
+
+  - id: extra_public
+    category: cheat
+    description: "No extra public API beyond {apply,normalize,SKIP,SinkError}"
+
+  - id: mock_in_sut
+    category: cheat
+    description: "H5: no unittest.mock in quota_broker.py"
+
+  - id: bare_except
+    category: cheat
+    description: "No bare except / except Exception"
+
+  - id: hardcode_gold_set
+    category: cheat
+    description: "No literal set with gold scores/keys"
+
+  - id: sample_leak
+    category: cheat
+    description: "No alpha/beta/quota-lab in impl"
+
+  - id: wrote_tests
+    category: cheat
+    description: "No new files under tests/"
+
+  - id: pragma_mutate
+    category: cheat
+    description: "No # pragma: no mutate"
+
+  - id: architecture_theater
+    category: cheat
+    description: "No ABC/Protocol/metaclass/DI container"

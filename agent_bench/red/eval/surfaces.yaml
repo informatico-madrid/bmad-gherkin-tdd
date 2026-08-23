@@ -1,0 +1,273 @@
+# surfaces.yaml — Canonical list of mutant surfaces for TDD RED bench.
+#
+# Each surface = one row in the evaluation matrix.
+# id: unique identifier
+# category: operator | technique | h-case | equivalent
+# description: human-readable
+# ast_hint: brief description of what the AST checker looks for
+#
+# The scorer (static_score.py) loads this and evaluates each surface
+# against the test file AST. Surfaces without AST predicates are
+# scored via the juez LLM (marked llm_only: true).
+
+surfaces:
+  # ── §2 Operadores mutmut ──────────────────────────────────────────
+  - id: num_boundary
+    category: operator
+    description: "Números n→n+1: test must use exact values at comparison boundary"
+    ast_hint: "numeric literals near comparisons (threshold-1, threshold, threshold+1)"
+
+  - id: string_xxwrap
+    category: operator
+    description: "Strings 'key'→'XXkeyXX': exact equality on strings"
+    ast_hint: "assert ... == 'exact_string' or assert msg == re.escape(...)"
+
+  - id: cmp_boundary
+    category: operator
+    description: "Comparaciones <↔<=, >↔>=: three-point boundary test"
+    ast_hint: "three distinct numeric values at same comparison boundary"
+
+  - id: bool_and_or
+    category: operator
+    description: "and↔or: TF and FT cases (not just TT/FF)"
+    ast_hint: "separate test functions or assert blocks for different boolean combos"
+
+  - id: bool_not
+    category: operator
+    description: "not x→x: test both True and False inputs"
+    ast_hint: "assert with True and False as expected values"
+
+  - id: in_notin
+    category: operator
+    description: "in↔not in: positive and negative membership"
+    ast_hint: "assert ... in ... and assert ... not in ..."
+
+  - id: is_isnot
+    category: operator
+    description: "is↔is not: identity with sentinel (not None)"
+    ast_hint: "assert x is SENTINEL (not None, not ==)"
+
+  - id: break_continue
+    category: operator
+    description: "break↔continue: count iterations or mock calls"
+    ast_hint: "len(calls) == N or call_count assertions"
+
+  - id: return_none
+    category: operator
+    description: "return x→return None: assert exact return value"
+    ast_hint: "assert result == expected_tuple (not just assert result)"
+
+  - id: default_mutation
+    category: operator
+    description: "def f(x=10)→f(x=11): call WITHOUT the kwarg"
+    ast_hint: "function call missing the keyword arg (e.g. no timeout= in call)"
+
+  - id: kwargs_passthrough
+    category: operator
+    description: "f(timeout=600)→f(timeout=601): assert_called_once_with ALL kwargs"
+    ast_hint: "assert_called_once_with(..., timeout=600) or call_args_list with full kwargs"
+
+  - id: arith_accumulator
+    category: operator
+    description: "+/-, +=/=: >=2 items with asymmetric values (not 0,1)"
+    ast_hint: "at least 2 numeric values summed/accumulated, values not in {0,1,2}"
+
+  - id: in_is_membership
+    category: operator
+    description: "in↔not in AND is↔is not combined"
+    ast_hint: "both 'in' and 'not in' in test file"
+
+  # ── §4 Técnicas ──────────────────────────────────────────────────
+  - id: dense_assertions
+    category: technique
+    description: "§4.1 Aserciones densas: full structure equality, not field-by-field"
+    ast_hint: "assert result == ObjectType(...) or assert result == {dict_literal}"
+
+  - id: exact_boundary
+    category: technique
+    description: "§4.2 Fronteras exactas: 3 inputs per comparison (below, at, above)"
+    ast_hint: "three numeric test values at same boundary"
+
+  - id: exact_string
+    category: technique
+    description: "§4.3 Strings exactos: == or re.escape, never 'in str(result)'"
+    ast_hint: "assert ... == 'exact' or match=re.escape(...)"
+
+  - id: spy_complete
+    category: technique
+    description: "§4.4 Spies: assert_called_once_with ALL args + kwargs"
+    ast_hint: "assert_called_once_with with multiple args and kwargs"
+
+  - id: default_kwarg
+    category: technique
+    description: "§4.5 Default: call WITHOUT kwarg, observe default downstream"
+    ast_hint: "function call missing optional keyword arg"
+
+  - id: accumulator_asymmetric
+    category: technique
+    description: "§4.6 Acumuladores: >=2 items, values 3 and 5 (not 2+2)"
+    ast_hint: "numeric literals 3 and 5 (or other non-symmetric pair) in test"
+
+  - id: break_count
+    category: technique
+    description: "§4.7 break↔continue: count iterations"
+    ast_hint: "assert len(calls) == N or call_count == N"
+
+  - id: truth_table
+    category: technique
+    description: "§4.8 Truth table: TF and FT for and/or"
+    ast_hint: "at least 2 test functions/assert blocks for different boolean combos"
+
+  - id: hypothesis_basic
+    category: technique
+    description: "§4.9 Property-based: at least one @given"
+    ast_hint: "@given decorator in test file"
+
+  - id: caplog_exact
+    category: technique
+    description: "§4.3 caplog with == message, not 'in' substring"
+    ast_hint: "caplog and assert ... .message == '...' or assert ... .getMessage()"
+
+  - id: typed_exception
+    category: technique
+    description: "§4.3 Specific exception type + match=re.escape(...)"
+    ast_hint: "pytest.raises(SpecificError, match=re.escape(...))"
+
+  # ── H-cases ──────────────────────────────────────────────────────
+  - id: h1_wiring
+    category: h-case
+    description: "H1: assert_called_once_with + is (identity) for all args"
+    ast_hint: "assert_called_once_with(...) AND 'is' comparison on args"
+
+  - id: h2_clock
+    category: h-case
+    description: "H2: clock.now() called, result used (freeze pattern)"
+    ast_hint: "clock.now() or freeze in test"
+
+  - id: h3_log
+    category: h-case
+    description: "H3: caplog with exact format string match"
+    ast_hint: "caplog + assert == 'exact message with %s'"
+
+  - id: h4_truth_table
+    category: h-case
+    description: "H4: complete truth table (not just TT/FF for and/or)"
+    ast_hint: "at least 3 different boolean combinations tested"
+
+  - id: h6_fallback
+    category: h-case
+    description: "H6: SinkError side_effect + assert fallback result"
+    ast_hint: "side_effect=SomeError + assert result == FallbackValue"
+
+  - id: h7_argv_order
+    category: h-case
+    description: "H7: argv/list order assertion"
+    ast_hint: "assert list == [a, b, c] (exact order)"
+
+  - id: h8_stop_count
+    category: h-case
+    description: "H8: stop_on_first: assert len(sink.calls) == 1"
+    ast_hint: "assert len(...) == 1 with stop_on_first"
+
+  - id: h10_cache
+    category: h-case
+    description: "H10: second call does not re-emit (cache behavior)"
+    ast_hint: "two calls to same function, second has fewer emissions"
+
+  - id: h11_limit
+    category: h-case
+    description: "H11: test calls public API at boundary even if 'should not pass'"
+    ast_hint: "test with threshold exact value (not just above/below)"
+
+  - id: h14_xxwrap
+    category: h-case
+    description: "H14: assert msg == 'exact' (not 'in str(msg)')"
+    ast_hint: "assert ... == '...' on error message (no 'in str(...)')"
+
+  - id: h15_none_vs_falsy
+    category: h-case
+    description: "H15: separate calls for None, 0, False (not grouped as 'falsy')"
+    ast_hint: "three separate assertions: None, 0, False"
+
+  - id: h18_default_no_kwarg
+    category: h-case
+    description: "H18: call WITHOUT timeout kwarg (not inspect.signature)"
+    ast_hint: "apply(...) without timeout= in call"
+
+  - id: h19_unit_only
+    category: h-case
+    description: "H19: all tests in tests/unit/ (not @integration)"
+    ast_hint: "all test files under tests/unit/"
+
+  - id: h20_pathmap
+    category: h-case
+    description: "H20: path_map identity None vs mangled key"
+    ast_hint: "assert path_map[None] and assert 'XXkeyXX' not in path_map"
+
+  # ── §5 Equivalents (matables, not pragma'd) ──────────────────────
+  - id: type_a_itercount
+    category: equivalent
+    description: "Tipo A: count iterations to kill break→continue"
+    ast_hint: "assert len(calls) == N"
+
+  - id: type_b_public_limit
+    category: equivalent
+    description: "Tipo B: call public API at unreachable boundary"
+    ast_hint: "test with exact boundary value"
+
+  - id: type_c_absent_key
+    category: equivalent
+    description: "Tipo C: test with absent key to observe default"
+    ast_hint: "spec missing field + test with that field absent"
+
+  - id: type_d_unreachable
+    category: equivalent
+    description: "Tipo D: side_effect for unreachable state"
+    ast_hint: "side_effect=... + assert raises"
+
+  - id: type_e_timeout_spy
+    category: equivalent
+    description: "Tipo E: spy observes timeout value"
+    ast_hint: "assert_called_once_with(..., timeout=600)"
+
+  - id: type_f_roundtrip
+    category: equivalent
+    description: "Tipo F: write+read roundtrip for internal string key"
+    ast_hint: "function that both writes and reads the same key"
+    llm_only: true
+
+  - id: type_g_sentinel
+    category: equivalent
+    description: "Tipo G: sentinel with __eq__ to make is vs == diverge"
+    ast_hint: "object() sentinel + object with __eq__ always True"
+
+  - id: type_h_log_msg
+    category: equivalent
+    description: "Tipo H: log messages are contract (caplog ==)"
+    ast_hint: "caplog + assert == 'exact message'"
+
+  # ── Forbiddens (penalties) ───────────────────────────────────────
+  - id: no_loose_none
+    category: forbidden
+    description: "FORBIDDEN: assert x is not None as sole assertion"
+    ast_hint: "penalty if 'is not None' without other assertions"
+
+  - id: no_loose_in
+    category: forbidden
+    description: "FORBIDDEN: assert 'x' in str(result)"
+    ast_hint: "penalty if 'in str(' in assert"
+
+  - id: no_len_gt
+    category: forbidden
+    description: "FORBIDDEN: assert len(x) > 0"
+    ast_hint: "penalty if 'len(' and '>' in same assert"
+
+  - id: no_sample_leak
+    category: forbidden
+    description: "FORBIDDEN: 'alpha'/'beta'/'quota-lab' in expected values"
+    ast_hint: "penalty if literal in assert expected"
+
+  - id: no_mock_iterable
+    category: forbidden
+    description: "FORBIDDEN: MagicMock() as records iterable (H17)"
+    ast_hint: "penalty if MagicMock() used as iterable input"
