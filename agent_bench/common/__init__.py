@@ -40,7 +40,11 @@ def clean_pycache(base: Path) -> None:
 
 
 def run_opencode(sandbox: Path, model_id: str, agent: str, prompt: str,
-                 timeout: int = 1800) -> dict:
+                 timeout: int = 1800, env: dict | None = None) -> dict:
+    import os
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
     start = time.time()
     timeout_val = None if timeout == 0 else timeout
     try:
@@ -53,6 +57,7 @@ def run_opencode(sandbox: Path, model_id: str, agent: str, prompt: str,
              prompt],
             capture_output=True, text=True,
             timeout=timeout_val, cwd=str(sandbox),
+            env=run_env,
         )
         return {
             "model": model_id,

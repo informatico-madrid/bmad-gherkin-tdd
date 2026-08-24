@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """launch.py — Launch bmad-loop-sweep bench against multiple models.
 
-Each model runs the sweep skill against the same deferred-work ledger.
-The sweep skill checks BMAD_LOOP_MODE=1 and writes result.json.
+Pattern: same as TDD benchmarks. Uses run_opencode from common.
+Sweep-specific: sets BMAD_LOOP env vars for automation mode.
 """
 
 from __future__ import annotations
@@ -11,9 +11,6 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
-import sys
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,48 +43,9 @@ def _create_sandbox(run_dir: Path, model_id: str) -> Path:
         shutil.rmtree(sandbox)
     shutil.copytree(FIXTURE_DIR, sandbox)
     clean_pycache(sandbox)
+    # Create tasks dir for sweep result output
+    (sandbox / "tasks" / "sweep-1").mkdir(parents=True, exist_ok=True)
     return sandbox
-
-
-def _run_sweep(sandbox: Path, model_id: str, timeout: int = 1800) -> dict:
-    """Run the sweep via opencode with BMAD_LOOP env vars."""
-    run_dir = sandbox
-    task_dir = run_dir / "tasks" / "sweep-1"
-    task_dir.mkdir(parents=True, exist_ok=True)
-    result_path = task_dir / "result.json"
-
-    env = os.environ.copy()
-    env["BMAD_LOOP_MODE"] = "1"
-    env["BMAD_LOOP_RUN_DIR"] = str(run_dir)
-    env["BMAD_LOOP_TASK_ID"] = "sweep-1"
-
-    start = time.time()
-    timeout_val = None if timeout == 0 else timeout
-    try:
-        result = subprocess.run(
-            ["opencode", "run", "--pure",
-             "--dir", str(sandbox),
-             "--agent", "bmad-loop-sweep",
-             "--model", model_id,
-             "--auto", "--format", "json",
-             SWEEP_PROMPT],
-            capture_output=True, text=True,
-            timeout=timeout_val, cwd=str(sandbox), env=env,
-        )
-        return {
-            "model": model_id,
-            "status": "completed" if result.returncode == 0 else "failed",
-            "returncode": result.returncode,
-            "elapsed_s": round(time.time() - start, 1),
-            "stdout": result.stdout[-2000:] if result.stdout else "",
-            "stderr": result.stderr[-2000:] if result.stderr else "",
-        }
-    except subprocess.TimeoutExpired:
-        return {"model": model_id, "status": "timeout", "returncode": -1,
-                "elapsed_s": round(time.time() - start, 1), "stdout": "", "stderr": f"Timeout {timeout}s"}
-    except FileNotFoundError:
-        return {"model": model_id, "status": "error", "returncode": -1,
-                "elapsed_s": 0, "stdout": "", "stderr": "opencode CLI not found"}
 
 
 def main():
@@ -120,9 +78,20 @@ def main():
 
     max_workers = args.parallel if args.parallel > 0 else len(sandboxes)
     print(f"[launch] {len(sandboxes)} models, max {max_workers} in parallel")
+
+    # Sweep-specific env vars
+    sweep_env = {
+        "BMAD_LOOP_MODE": "1",
+        "BMAD_LOOP_TASK_ID": "sweep-1",
+    }
+
     results = []
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_run_sweep, sb, mid, args.timeout): mid for mid, sb in sandboxes}
+        futures = {}
+        for mid, sb in sandboxes:
+            env = {**sweep_env, "BMAD_LOOP_RUN_DIR": str(sb)}
+            futures[pool.submit(run_opencode, sb, mid, "bmad-loop-sweep", SWEEP_PROMPT, args.timeout, env)] = mid
+
         for future in as_completed(futures):
             mid = futures[future]
             try:

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""launch.py — Launch bmad-loop-resolve bench."""
+"""launch.py — Launch bmad-loop-resolve bench against multiple models.
+
+Pattern: same as TDD benchmarks. Uses run_opencode from common.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
-import subprocess
-import sys
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +16,7 @@ from pathlib import Path
 from agent_bench.common import resolve_models, slugify, clean_pycache, run_opencode
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "resolve-hard"
-RUNS_BASE = Path(__file__).parent.parent.parent / "_bmad-output" / "agent-bench" / "runs" / "bmad-libs-resolve"
+RUNS_BASE = Path(__file__).parent.parent.parent / "_bmad-output" / "agent-bench" / "runs" / "bmad_libs_resolve"
 
 RESOLVE_PROMPT = (
     "Load skill bmad-loop-resolve. "
@@ -32,7 +31,7 @@ RESOLVE_PROMPT = (
 )
 
 
-def _create_sandbox(run_dir, model_id):
+def _create_sandbox(run_dir: Path, model_id: str) -> Path:
     slug = slugify(model_id)
     sandbox = run_dir / slug
     if sandbox.exists():
@@ -86,7 +85,7 @@ def main():
 
     order = {m: i for i, m in enumerate(models)}
     results.sort(key=lambda r: order.get(r["model"], len(models)))
-    manifest = {"run_id": run_id, "phase": "bmad-libs-resolve", "timestamp": datetime.now(timezone.utc).isoformat(),
+    manifest = {"run_id": run_id, "phase": "bmad_libs_resolve", "timestamp": datetime.now(timezone.utc).isoformat(),
                 "fixture": str(FIXTURE_DIR), "timeout": args.timeout, "results": results}
     (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     completed = sum(1 for r in results if r["status"] == "completed")
