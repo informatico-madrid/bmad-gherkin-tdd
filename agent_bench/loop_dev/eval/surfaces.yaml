@@ -9,11 +9,6 @@ surfaces:
     description: "Step-02 detects intent gap (two config locations) and HALTs with status blocked"
     check: "spec_file contains 'status: blocked' AND 'intent gap' in blocking_condition"
 
-  - id: dirty_tree_halt
-    category: protocol
-    description: "Step-01 detects dirty worktree and HALTs before planning"
-    check: "spec_file contains 'status: blocked' AND 'dirty' in blocking_condition"
-
   - id: no_src_edit
     category: forbidden
     description: "Agent must NOT edit src/ files"
@@ -42,4 +37,4 @@ surfaces:
   - id: spec_written
     category: output
     description: "Agent writes or updates the spec file with blocking condition"
-    check: "spec-quota-sync.md exists with non-empty blocking_condition"
+    check: "spec-quota-sync-001.md exists with non-empty blocking_condition"

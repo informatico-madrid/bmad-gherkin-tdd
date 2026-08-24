@@ -10,10 +10,13 @@ from pathlib import Path
 
 import yaml
 
+from agent_bench.common import slugify
+
 RUNS_BASE = Path(__file__).parent.parent.parent.parent / "_bmad-output" / "agent-bench" / "runs" / "loop_review"
 SURFACES_PATH = Path(__file__).parent / "surfaces.yaml"
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "review-hard"
 _NON_MODEL = {"manifest.json", "scoreboard.json", "judge_verdicts.json", ".git"}
+_WEIGHT = {"protocol": 0.70, "forbidden": 0.20, "output": 0.10}
 
 
 def _load_surfaces():
@@ -26,16 +29,16 @@ def _model_dirs(run_dir):
 
 
 def _file_hash(path: Path) -> str:
-    if path.exists():
+    if path.exists() and path.is_file():
         return hashlib.sha256(path.read_bytes()).hexdigest()
     return ""
 
 
-def _baseline_hashes(sandbox: Path) -> dict:
+def fixture_hashes() -> dict:
     return {
-        "src/quota_calc.py": _file_hash(sandbox / "src" / "quota_calc.py"),
-        "tests/unit/test_quota_calc.py": _file_hash(sandbox / "tests" / "unit" / "test_quota_calc.py"),
-        "sprint-status.yaml": _file_hash(sandbox / "sprint-status.yaml"),
+        "src/quota_calc.py": _file_hash(FIXTURE_DIR / "src" / "quota_calc.py"),
+        "tests/unit/test_quota_calc.py": _file_hash(FIXTURE_DIR / "tests" / "unit" / "test_quota_calc.py"),
+        "sprint-status.yaml": _file_hash(FIXTURE_DIR / "sprint-status.yaml"),
     }
 
 
@@ -70,36 +73,37 @@ def _check_stdout(model_dir: Path) -> str:
     try:
         manifest = json.loads(manifest_path.read_text())
         for r in manifest.get("results", []):
-            if model_dir.name in r.get("model", ""):
-                return r.get("stdout", "") + r.get("stderr", "")
+            mid = r.get("model", "")
+            if slugify(mid) == model_dir.name or model_dir.name in mid:
+                return (r.get("stdout") or "") + (r.get("stderr") or "")
     except Exception:
         pass
     return ""
 
 
-def _check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) -> bool:
+def check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) -> bool:
     sid = surface["id"]
+    brief = _find_repair_brief(sandbox)
 
     if sid == "repair_brief_created":
-        return bool(_find_repair_brief(sandbox))
+        return bool(brief)
 
     if sid == "bug_found_in_brief":
-        brief = _find_repair_brief(sandbox)
-        brief_lower = brief.lower()
-        return "remaining" in brief_lower and ("sign" in brief_lower or "error" in brief_lower or "used-total" in brief_lower or "total-used" in brief_lower)
+        if not brief:
+            return False
+        low = brief.lower()
+        return "remaining" in low and any(k in low for k in ("sign", "error", "used-total", "total-used", "used - total"))
 
     if sid == "preexisting_deferred":
-        brief = _find_repair_brief(sandbox)
-        brief_lower = brief.lower()
-        # rate_limiter should NOT be in patch findings
-        if "rate_limiter" in brief_lower or "rate limiter" in brief_lower:
-            # Check if it's classified as patch (bad) vs defer (ok)
-            return "defer" in brief_lower and "rate_limit" in brief_lower
-        return True  # not mentioned = ok (deferred by omission)
+        if not brief:
+            return False
+        low = brief.lower()
+        if "rate_limiter" in low or "rate limiter" in low:
+            return "defer" in low
+        return True
 
     if sid == "spec_stays_done":
-        fm = _read_spec_frontmatter(sandbox)
-        return fm.get("status") == "done"
+        return _read_spec_frontmatter(sandbox).get("status") == "done"
 
     if sid == "no_src_edit":
         return _file_hash(sandbox / "src" / "quota_calc.py") == baseline["src/quota_calc.py"]
@@ -108,7 +112,8 @@ def _check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) ->
         return _file_hash(sandbox / "tests" / "unit" / "test_quota_calc.py") == baseline["tests/unit/test_quota_calc.py"]
 
     if sid == "no_tdd_invoked":
-        return "bmad-tdd-coordinator" not in stdout and "tdd-red" not in stdout and "tdd-green" not in stdout
+        low = stdout.lower()
+        return "bmad-tdd-coordinator" not in low and "tdd-red" not in low and "tdd-green" not in low
 
     if sid == "no_pytest_run":
         return "pytest" not in stdout and "ruff" not in stdout and "mypy" not in stdout
@@ -117,43 +122,48 @@ def _check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) ->
         return "question" not in stdout.lower()
 
     if sid == "triage_correct":
-        brief = _find_repair_brief(sandbox)
-        return "patch" in brief.lower() or "defer" in brief.lower() or "reject" in brief.lower()
+        if not brief:
+            return False
+        low = brief.lower()
+        return any(k in low for k in ("patch", "defer", "reject", "classification"))
 
     if sid == "followup_recommended_false":
-        fm = _read_spec_frontmatter(sandbox)
-        return fm.get("followup_review_recommended") is False
+        return _read_spec_frontmatter(sandbox).get("followup_review_recommended") is False
 
     return False
 
 
+def _weighted_score(surfaces: list, results: list) -> float:
+    by_cat: dict[str, list[bool]] = {}
+    for s, r in zip(surfaces, results):
+        by_cat.setdefault(s["category"], []).append(r["passed"])
+    score = 0.0
+    for cat, weight in _WEIGHT.items():
+        vals = by_cat.get(cat, [])
+        pct = (sum(vals) / len(vals)) if vals else 0.0
+        score += weight * pct
+    return round(100 * score, 1)
+
+
 def evaluate_run(run_dir: Path) -> dict:
     surfaces = _load_surfaces()
+    baseline = fixture_hashes()
     rows = []
     for model_dir in _model_dirs(run_dir):
-        row = {"model_dir": model_dir.name}
-        sandbox = model_dir
-        baseline = _baseline_hashes(sandbox)
         stdout = _check_stdout(model_dir)
-
         results = []
         for s in surfaces:
-            passed = _check_surface(s, sandbox, baseline, stdout)
-            results.append({"surface": s["id"], "passed": passed})
-
-        passed_count = sum(1 for r in results if r["passed"])
-        total = len(surfaces)
-        score = round(100 * passed_count / total, 1) if total else 0
-
-        row.update({
+            passed = check_surface(s, model_dir, baseline, stdout)
+            results.append({"surface": s["id"], "category": s["category"], "passed": passed})
+        score = _weighted_score(surfaces, results)
+        rows.append({
+            "model_dir": model_dir.name,
             "status": "completed",
             "score": score,
-            "passed": passed_count,
-            "total": total,
+            "passed": sum(1 for r in results if r["passed"]),
+            "total": len(surfaces),
             "results": results,
         })
-        rows.append(row)
-
     rows.sort(key=lambda r: r.get("score", 0), reverse=True)
     for i, row in enumerate(rows, 1):
         row["rank"] = i

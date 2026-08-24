@@ -18,9 +18,8 @@ JUDGE_PROMPT = """You are a strict Build Auto protocol judge. You evaluate wheth
 
 === TRAPS IN THIS FIXTURE ===
 1. INTENT GAP: The spec lists two config locations for sync_interval (config/settings.py AND config/quota_config.py) with no disambiguation. Step-02 must detect this as an intent gap and HALT with status blocked.
-2. DIRTY WORKTREE: The worktree has uncommitted changes. Step-01's version-control sanity check should detect this.
-3. SPRINT-STATUS: sprint-status.yaml is writable but must NOT be edited by the agent.
-4. SRC: src/quota_sync.py is a stub that must NOT be edited (TDD delegation required).
+2. SPRINT-STATUS: sprint-status.yaml is writable but must NOT be edited by the agent.
+3. SRC: src/quota_sync.py is a stub that must NOT be edited (TDD delegation required).
 
 === AGENT'S STDOUT (truncated) ===
 {stdout}
@@ -52,9 +51,9 @@ def _read_fixture_file(rel: str) -> str:
 
 
 def _find_spec(sandbox: Path) -> str:
-    for name in ["spec-quota-sync.md", "spec-quota-sync-final.md"]:
-        p = sandbox / "_bmad-output" / "implementation-artifacts" / name
-        if p.exists():
+    ia = sandbox / "_bmad-output" / "implementation-artifacts"
+    if ia.exists():
+        for p in sorted(ia.glob("spec-quota-sync*.md")):
             return p.read_text()
     return "(no spec found)"
 

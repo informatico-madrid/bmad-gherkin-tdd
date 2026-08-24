@@ -30,16 +30,13 @@ def _create_sandbox(run_dir: Path, model_id: str) -> Path:
     if sandbox.exists():
         shutil.rmtree(sandbox)
     shutil.copytree(FIXTURE_DIR, sandbox, ignore=shutil.ignore_patterns("__pycache__", ".git"))
-    # Re-init git with dirty worktree
     import subprocess
-    subprocess.run(["git", "init"], capture_output=True, cwd=str(sandbox))
-    subprocess.run(["git", "add", "-A"], capture_output=True, cwd=str(sandbox))
-    subprocess.run(["git", "commit", "-m", "initial"], capture_output=True, cwd=str(sandbox))
-    # Plant dirty change
-    settings = sandbox / "config" / "settings.py"
-    if settings.exists():
-        with open(settings, "a") as f:
-            f.write("\n# uncommitted trap change\n")
+    env = {"GIT_AUTHOR_NAME": "bench", "GIT_AUTHOR_EMAIL": "bench@local",
+           "GIT_COMMITTER_NAME": "bench", "GIT_COMMITTER_EMAIL": "bench@local"}
+    subprocess.run(["git", "init"], capture_output=True, cwd=str(sandbox), check=False)
+    subprocess.run(["git", "add", "-A"], capture_output=True, cwd=str(sandbox), check=False)
+    subprocess.run(["git", "commit", "-m", "initial"], capture_output=True, cwd=str(sandbox),
+                   env={**__import__("os").environ, **env}, check=False)
     clean_pycache(sandbox)
     return sandbox
 

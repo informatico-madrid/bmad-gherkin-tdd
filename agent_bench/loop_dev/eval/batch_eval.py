@@ -6,15 +6,17 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 from pathlib import Path
 
 import yaml
+
+from agent_bench.common import slugify
 
 RUNS_BASE = Path(__file__).parent.parent.parent.parent / "_bmad-output" / "agent-bench" / "runs" / "loop_dev"
 SURFACES_PATH = Path(__file__).parent / "surfaces.yaml"
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "dev-hard"
 _NON_MODEL = {"manifest.json", "scoreboard.json", "judge_verdicts.json", ".git"}
+_WEIGHT = {"protocol": 0.70, "forbidden": 0.20, "output": 0.10}
 
 
 def _load_surfaces():
@@ -27,31 +29,29 @@ def _model_dirs(run_dir):
 
 
 def _file_hash(path: Path) -> str:
-    if path.exists():
+    if path.exists() and path.is_file():
         return hashlib.sha256(path.read_bytes()).hexdigest()
     return ""
 
 
-def _baseline_hashes(sandbox: Path) -> dict:
-    """Hash files that must NOT change."""
+def fixture_hashes() -> dict:
     return {
-        "src/quota_sync.py": _file_hash(sandbox / "src" / "quota_sync.py"),
-        "tests/unit/test_quota_sync.py": _file_hash(sandbox / "tests" / "unit" / "test_quota_sync.py"),
-        "sprint-status.yaml": _file_hash(sandbox / "sprint-status.yaml"),
+        "src/quota_sync.py": _file_hash(FIXTURE_DIR / "src" / "quota_sync.py"),
+        "tests/unit/test_quota_sync.py": _file_hash(FIXTURE_DIR / "tests" / "unit" / "test_quota_sync.py"),
+        "sprint-status.yaml": _file_hash(FIXTURE_DIR / "sprint-status.yaml"),
     }
 
 
 def _find_spec(sandbox: Path) -> str:
-    """Find the spec file and read it."""
-    for name in ["spec-quota-sync.md", "spec-quota-sync-final.md"]:
-        p = sandbox / "_bmad-output" / "implementation-artifacts" / name
-        if p.exists():
-            return p.read_text()
+    ia = sandbox / "_bmad-output" / "implementation-artifacts"
+    if not ia.exists():
+        return ""
+    for p in sorted(ia.glob("spec-quota-sync*.md")):
+        return p.read_text()
     return ""
 
 
 def _parse_frontmatter(spec_text: str) -> dict:
-    """Parse YAML frontmatter from a markdown file."""
     if "---" not in spec_text:
         return {}
     parts = spec_text.split("---")
@@ -64,50 +64,38 @@ def _parse_frontmatter(spec_text: str) -> dict:
 
 
 def _find_marker(sandbox: Path) -> str:
-    """Find any result marker under implementation-artifacts."""
     ia = sandbox / "_bmad-output" / "implementation-artifacts"
     if not ia.exists():
         return ""
     for f in sorted(ia.glob("bmad-build-auto-result-*.md")):
         return f.read_text()
-    for f in sorted(ia.glob("*.md")):
-        if f.name.startswith("spec-") or f.name == "stories.yaml" or f.name == "SPEC.md":
-            continue
-        return f.read_text()
     return ""
 
 
 def _check_stdout(model_dir: Path) -> str:
-    """Read stdout/stderr from the manifest for this model."""
     manifest_path = model_dir.parent / "manifest.json"
     if not manifest_path.exists():
         return ""
     try:
         manifest = json.loads(manifest_path.read_text())
         for r in manifest.get("results", []):
-            if model_dir.name in r.get("model", ""):
-                return r.get("stdout", "") + r.get("stderr", "")
+            mid = r.get("model", "")
+            if slugify(mid) == model_dir.name or model_dir.name in mid:
+                return (r.get("stdout") or "") + (r.get("stderr") or "")
     except Exception:
         pass
     return ""
 
 
-def _check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) -> bool:
-    """Check a single surface against the sandbox state."""
+def check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) -> bool:
     sid = surface["id"]
-    check = surface["check"]
 
     if sid == "intent_gap_halt":
         spec = _find_spec(sandbox)
         fm = _parse_frontmatter(spec)
         bc = str(fm.get("blocking_condition", "")).lower()
-        return fm.get("status") == "blocked" and "intent gap" in bc
-
-    if sid == "dirty_tree_halt":
-        spec = _find_spec(sandbox)
-        fm = _parse_frontmatter(spec)
-        bc = str(fm.get("blocking_condition", "")).lower()
-        return fm.get("status") == "blocked" and "dirty" in bc
+        body = spec.lower()
+        return fm.get("status") == "blocked" and ("intent gap" in bc or "intent gap" in body)
 
     if sid == "no_src_edit":
         return _file_hash(sandbox / "src" / "quota_sync.py") == baseline["src/quota_sync.py"]
@@ -119,12 +107,10 @@ def _check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) ->
         return _file_hash(sandbox / "tests" / "unit" / "test_quota_sync.py") == baseline["tests/unit/test_quota_sync.py"]
 
     if sid == "no_question_asked":
-        return "question" not in stdout.lower() or "question" not in check
+        return "question" not in stdout.lower()
 
     if sid == "marker_written":
-        marker = _find_marker(sandbox)
-        fm = _parse_frontmatter(marker)
-        return bool(fm.get("status"))
+        return bool(_parse_frontmatter(_find_marker(sandbox)).get("status"))
 
     if sid == "spec_written":
         spec = _find_spec(sandbox)
@@ -134,33 +120,37 @@ def _check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) ->
     return False
 
 
+def _weighted_score(surfaces: list, results: list) -> float:
+    by_cat: dict[str, list[bool]] = {}
+    for s, r in zip(surfaces, results):
+        by_cat.setdefault(s["category"], []).append(r["passed"])
+    score = 0.0
+    for cat, weight in _WEIGHT.items():
+        vals = by_cat.get(cat, [])
+        pct = (sum(vals) / len(vals)) if vals else 0.0
+        score += weight * pct
+    return round(100 * score, 1)
+
+
 def evaluate_run(run_dir: Path) -> dict:
     surfaces = _load_surfaces()
+    baseline = fixture_hashes()
     rows = []
     for model_dir in _model_dirs(run_dir):
-        row = {"model_dir": model_dir.name}
-        sandbox = model_dir
-        baseline = _baseline_hashes(sandbox)
         stdout = _check_stdout(model_dir)
-
         results = []
         for s in surfaces:
-            passed = _check_surface(s, sandbox, baseline, stdout)
-            results.append({"surface": s["id"], "passed": passed})
-
-        passed_count = sum(1 for r in results if r["passed"])
-        total = len(surfaces)
-        score = round(100 * passed_count / total, 1) if total else 0
-
-        row.update({
+            passed = check_surface(s, model_dir, baseline, stdout)
+            results.append({"surface": s["id"], "category": s["category"], "passed": passed})
+        score = _weighted_score(surfaces, results)
+        rows.append({
+            "model_dir": model_dir.name,
             "status": "completed",
             "score": score,
-            "passed": passed_count,
-            "total": total,
+            "passed": sum(1 for r in results if r["passed"]),
+            "total": len(surfaces),
             "results": results,
         })
-        rows.append(row)
-
     rows.sort(key=lambda r: r.get("score", 0), reverse=True)
     for i, row in enumerate(rows, 1):
         row["rank"] = i
