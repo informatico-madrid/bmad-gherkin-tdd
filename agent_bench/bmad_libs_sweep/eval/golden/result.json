@@ -1,0 +1,63 @@
+{
+  "workflow": "deferred-sweep-triage",
+  "open_ids": ["DW-1", "DW-2", "DW-3", "DW-4", "DW-5", "DW-6", "DW-8"],
+  "already_resolved": [
+    {
+      "id": "DW-1",
+      "evidence": "src/quota_monitor.py:12 — 'allowed' is correct; typo was already fixed in the latest commit"
+    }
+  ],
+  "bundles": [
+    {
+      "name": "rate-limiting-core",
+      "dw_ids": ["DW-2", "DW-3"],
+      "intent": "Add per-user rate limiting to the API endpoint and implement cleanup on shutdown. Both changes touch the same RateLimiter class in quota_monitor.py and share the rate_window configuration from config.py."
+    },
+    {
+      "name": "readme-update",
+      "dw_ids": ["DW-8"],
+      "intent": "Update the README to document the new API examples after the recent quota changes."
+    }
+  ],
+  "blocked": [
+    {
+      "id": "DW-4",
+      "blocker": "3-1-config-migration"
+    }
+  ],
+  "skip": [
+    {
+      "id": "DW-5",
+      "reason": "validators.py has been deprecated and removed; there is nothing to test"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "DW-6",
+      "question": "Should we redesign the REST API to use GraphQL?",
+      "context": "The current REST API at quota_monitor.py:14 handles basic CRUD but cannot express the complex cross-user query patterns needed for the dashboard. GraphQL would solve this but requires a significant rewrite and new client code.",
+      "options": [
+        {
+          "key": "1",
+          "label": "Adopt GraphQL",
+          "effect": "build",
+          "intent": "Replace the REST endpoints with a GraphQL schema, update all clients, and migrate existing integrations."
+        },
+        {
+          "key": "2",
+          "label": "Add REST endpoints for complex queries",
+          "effect": "build",
+          "intent": "Add specific REST endpoints for the dashboard queries without switching to GraphQL."
+        },
+        {
+          "key": "3",
+          "label": "Close — not needed now",
+          "effect": "close",
+          "resolution": "Dashboard is not yet in production; defer until requirements are concrete."
+        }
+      ],
+      "recommendation": "3"
+    }
+  ],
+  "escalations": []
+}
