@@ -30,11 +30,12 @@ CLEAN_PROMPT = (
 
 
 def _reset_fixture() -> None:
-    """Restore the dirty semilla into the fixture's src/."""
+    """Restore the dirty seed so a previous golden copy cannot contaminate runs."""
     clean_pycache(FIXTURE_DIR)
-    semilla = Path(__file__).parent / "eval" / "golden" / "quota_broker.py"
-    # The fixture src IS the semilla — it's the dirty version
-    # Just clean pycache, the src stays as-is
+    seed = Path(__file__).parent / "eval" / "seed" / "quota_broker.py"
+    dest = FIXTURE_DIR / "src" / "quota_broker.py"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(seed, dest)
 
 
 def _create_sandbox(run_dir: Path, model_id: str) -> Path:

@@ -1,11 +1,9 @@
-"""Quota Broker — clean golden for CLEAN benchmark.
+"""Quota Broker — REFACTOR semilla: passes gate, but monolith design.
 
-Passes gold+hidden tests AND cleaner-gate. Well-structured:
-- Extracted helpers (_eligible, _emit_key)
-- Named constants (THRESHOLD, TRACE_PREFIX)
-- No unused imports
-- No deep nesting
-- Complexity under thresholds
+Passes cleaner-gate (all checks PASS). Tests PASS. But:
+- apply() is still a single monolith mixing eligibility, cache, emit, log
+- No extracted helpers beyond _is_eligible
+- REFACTOR agent should improve this by splitting concerns
 """
 
 from __future__ import annotations
@@ -16,7 +14,6 @@ from typing import Any
 logger = logging.getLogger("quota_broker")
 
 SKIP = object()
-THRESHOLD_DEFAULT = 50
 DEFAULT_TIMEOUT = 600
 EMPTY_MSG = "records must not be empty"
 TRACE_PREFIX = "trace_"
@@ -33,7 +30,7 @@ def normalize(value: Any, *, fallback: int = 10) -> int:
 
 
 def _membership_ok(rec: Any, spec: Any) -> bool:
-    """Allow/deny/extra_key checks — flat, no BoolOps."""
+    """Allow/deny/extra_key — flat, no nesting."""
     deny = getattr(spec, "deny", None)
     if deny is not None:
         if rec.kind in deny:
@@ -42,15 +39,14 @@ def _membership_ok(rec: Any, spec: Any) -> bool:
     if allow is not None:
         if rec.kind not in allow:
             return False
-    extra_key = getattr(spec, "extra_key", None)
-    if extra_key is not None:
-        if getattr(rec, "tag", None) != extra_key:
+    if getattr(spec, "extra_key", None) is not None:
+        if getattr(rec, "tag", None) != spec.extra_key:
             return False
     return True
 
 
 def _is_eligible(rec: Any, spec: Any) -> bool:
-    """Single acceptance decision — flat, no BoolOps, cc≤10."""
+    """Flat acceptance — delegates membership to helper."""
     if rec.kind is SKIP:
         return False
     if not rec.active:
@@ -61,11 +57,9 @@ def _is_eligible(rec: Any, spec: Any) -> bool:
         return False
     if not _membership_ok(rec, spec):
         return False
-    flag = getattr(spec, "flag", False)
-    if flag:
+    if getattr(spec, "flag", False):
         return True
-    mode = getattr(spec, "mode", None)
-    if mode == "strict":
+    if getattr(spec, "mode", None) == "strict":
         return True
     if hasattr(spec, "flag"):
         return False
@@ -75,44 +69,33 @@ def _is_eligible(rec: Any, spec: Any) -> bool:
 
 
 def _resolve_emit_key(rec: Any, path_map: Any) -> Any:
-    """P14: path_map remaps emit key; None/absent keeps original."""
+    """Resolve emit key from path_map."""
     if not path_map:
         return rec.key
     mapped = path_map.get(rec.key)
     return rec.key if mapped is None else mapped
 
 
-def _replay_cached(rec: Any, accepted: list[Any], total_weight: int) -> int:
-    rec.trace_id = apply._cache[rec.key]
-    accepted.append(rec)
-    return total_weight + rec.weight
-
-
-def _commit_accept(rec: Any, accepted: list[Any], emitted: int) -> int:
-    rec.trace_id = f"{TRACE_PREFIX}{rec.key}"
-    apply._cache[rec.key] = rec.trace_id
-    logger.info("accepted %s score=%s", rec.key, rec.score)
-    print(f"dispatch {rec.key} {rec.kind}", flush=True)
-    accepted.append(rec)
-    return emitted + 1
+def _try_emit(rec: Any, spec: Any, sink: Any, path_map: Any, timeout: int) -> bool:
+    """Try to emit one record. Returns True on success, False on SinkError."""
+    try:
+        sink.emit(rec.kind, _resolve_emit_key(rec, path_map), str(rec.score), timeout=timeout)
+    except SinkError:
+        return False
+    return True
 
 
 def apply(
-    records: Any,
-    spec: Any,
-    sink: Any,
-    clock: Any,
-    *,
-    timeout: int = DEFAULT_TIMEOUT,
+    records: Any, spec: Any, sink: Any, clock: Any,
+    *, timeout: int = DEFAULT_TIMEOUT,
 ) -> tuple[tuple[Any, ...], tuple[Any, ...], int]:
+    """Monolith — mixes eligibility, cache, emit, log. REFACTOR should split."""
     if not records:
         raise ValueError(EMPTY_MSG)
-
     clock.now()
     max_emit = getattr(spec, "max_emit", None)
     stop_on_first = getattr(spec, "stop_on_first", False)
     path_map = getattr(spec, "path_map", None)
-
     accepted: list[Any] = []
     rejected: list[Any] = []
     total_weight = 0
@@ -128,16 +111,20 @@ def apply(
             rejected.append(rec)
             continue
         if rec.key in apply._cache:
-            total_weight = _replay_cached(rec, accepted, total_weight)
+            rec.trace_id = apply._cache[rec.key]
+            accepted.append(rec)
+            total_weight += rec.weight
             continue
-        try:
-            sink.emit(rec.kind, _resolve_emit_key(rec, path_map), str(rec.score), timeout=timeout)
-        except SinkError:
+        total_weight += rec.weight
+        if not _try_emit(rec, spec, sink, path_map, timeout):
             rejected.append(rec)
             continue
-        emitted = _commit_accept(rec, accepted, emitted)
-        total_weight += rec.weight
-
+        rec.trace_id = f"{TRACE_PREFIX}{rec.key}"
+        apply._cache[rec.key] = rec.trace_id
+        emitted += 1
+        logger.info("accepted %s score=%s", rec.key, rec.score)
+        print(f"dispatch {rec.key} {rec.kind}", flush=True)
+        accepted.append(rec)
     return (tuple(accepted), tuple(rejected), total_weight)
 
 

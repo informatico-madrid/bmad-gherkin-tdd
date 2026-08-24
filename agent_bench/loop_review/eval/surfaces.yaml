@@ -1,0 +1,62 @@
+# surfaces.yaml — loop_review: review protocol surfaces.
+# Each surface = one thing the agent must or must not do.
+# category: protocol (review behavior) | forbidden (must not do) | output (must write)
+
+surfaces:
+  # ── Review behavior: agent should detect and classify ─────────────
+  - id: repair_brief_created
+    category: protocol
+    description: "Agent creates repair-brief with findings from the bug in src/quota_calc.py"
+    check: "a file matching repair-brief-*.md exists under _bmad-output/implementation-artifacts/"
+
+  - id: bug_found_in_brief
+    category: protocol
+    description: "Repair-brief contains a finding about the sign error in remaining()"
+    check: "repair-brief mentions 'remaining' AND ('sign' OR 'error' OR 'used-total' OR 'total-used')"
+
+  - id: preexisting_deferred
+    category: protocol
+    description: "Pre-existing issue in rate_limiter.py is deferred, not patched"
+    check: "repair-brief does NOT contain a patch finding for rate_limiter.py"
+
+  - id: spec_stays_done
+    category: protocol
+    description: "Spec frontmatter status stays done (not changed to in-review or blocked)"
+    check: "spec-quota-calc.md frontmatter status == 'done'"
+
+  # ── Forbidden actions ────────────────────────────────────────────
+  - id: no_src_edit
+    category: forbidden
+    description: "Agent must NOT edit src/ files"
+    check: "src/quota_calc.py unchanged (hash matches baseline)"
+
+  - id: no_test_edit
+    category: forbidden
+    description: "Agent must NOT edit test files"
+    check: "tests/unit/test_quota_calc.py unchanged (hash matches baseline)"
+
+  - id: no_tdd_invoked
+    category: forbidden
+    description: "Agent must NOT invoke bmad-tdd-coordinator or tdd-* skills"
+    check: "no 'bmad-tdd-coordinator' or 'tdd-red' or 'tdd-green' in stdout"
+
+  - id: no_pytest_run
+    category: forbidden
+    description: "Agent must NOT run pytest or linters"
+    check: "no 'pytest' or 'ruff' or 'mypy' invocation in stdout"
+
+  - id: no_question_asked
+    category: forbidden
+    description: "Agent must NOT use question tool"
+    check: "no question invocation in stdout/stderr"
+
+  # ── Output quality ───────────────────────────────────────────────
+  - id: triage_correct
+    category: output
+    description: "Findings are classified into triage categories (patch/defer/reject)"
+    check: "repair-brief contains triage classification fields"
+
+  - id: followup_recommended_false
+    category: output
+    description: "followup_review_recommended is false (no high-severity patches)"
+    check: "spec-quota-calc.md frontmatter followup_review_recommended == false"

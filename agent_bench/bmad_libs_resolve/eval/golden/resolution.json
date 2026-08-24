@@ -1,6 +1,0 @@
-{
-  "story_key": "4-2-quota-dispatch",
-  "decision": "Deny takes precedence over allow. When a kind appears in both spec.allow and spec.deny, the record is rejected. This is the safer default: deny is a safety net that should never be overridden by allow.",
-  "spec_file": "_bmad-output/implementation-artifacts/spec-4-2-quota-dispatch.md",
-  "spec_updated": true
-}
