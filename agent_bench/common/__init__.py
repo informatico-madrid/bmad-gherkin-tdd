@@ -5,11 +5,28 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-import sys
 import time
 from pathlib import Path
 
 OPENCODE_CONFIG = Path.home() / ".config" / "opencode" / "opencode.json"
+
+
+def tool_names(output: str) -> list[str]:
+    """Return tools reported by OpenCode's JSONL stream."""
+    tools = set()
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        part = event.get("part")
+        if (
+            event.get("type") == "tool_use"
+            and isinstance(part, dict)
+            and part.get("tool")
+        ):
+            tools.add(part["tool"])
+    return sorted(tools)
 
 
 def resolve_models(model_args: str | None, known: list[str] | None = None) -> list[str]:
@@ -64,6 +81,7 @@ def run_opencode(sandbox: Path, model_id: str, agent: str, prompt: str,
             "status": "completed" if result.returncode == 0 else "failed",
             "returncode": result.returncode,
             "elapsed_s": round(time.time() - start, 1),
+            "tools": tool_names(result.stdout),
             "stdout": result.stdout[-2000:] if result.stdout else "",
             "stderr": result.stderr[-2000:] if result.stderr else "",
         }

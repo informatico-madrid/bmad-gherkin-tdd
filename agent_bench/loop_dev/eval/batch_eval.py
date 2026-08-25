@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from agent_bench.common import slugify
+from agent_bench.common import slugify, tool_names
 
 RUNS_BASE = Path(__file__).parent.parent.parent.parent / "_bmad-output" / "agent-bench" / "runs" / "loop_dev"
 SURFACES_PATH = Path(__file__).parent / "surfaces.yaml"
@@ -46,45 +46,41 @@ def _find_spec(sandbox: Path) -> str:
     ia = sandbox / "_bmad-output" / "implementation-artifacts"
     if not ia.exists():
         return ""
-    for p in sorted(ia.glob("spec-quota-sync*.md")):
+    candidates = sorted((ia / "stories").glob("quota-sync-001-*.md"))
+    candidates.extend(sorted(ia.glob("spec-quota-sync*.md")))
+    for p in candidates:
         return p.read_text()
     return ""
 
 
 def _parse_frontmatter(spec_text: str) -> dict:
-    if "---" not in spec_text:
+    if not spec_text.startswith("---"):
         return {}
-    parts = spec_text.split("---")
-    if len(parts) >= 3:
-        try:
-            return yaml.safe_load(parts[1]) or {}
-        except Exception:
-            return {}
-    return {}
+    try:
+        _, frontmatter, _ = spec_text.split("---", 2)
+        return yaml.safe_load(frontmatter) or {}
+    except (ValueError, yaml.YAMLError):
+        return {}
 
 
-def _find_marker(sandbox: Path) -> str:
-    ia = sandbox / "_bmad-output" / "implementation-artifacts"
-    if not ia.exists():
-        return ""
-    for f in sorted(ia.glob("bmad-build-auto-result-*.md")):
-        return f.read_text()
-    return ""
-
-
-def _check_stdout(model_dir: Path) -> str:
+def _manifest_result(model_dir: Path) -> dict:
     manifest_path = model_dir.parent / "manifest.json"
     if not manifest_path.exists():
-        return ""
+        return {}
     try:
         manifest = json.loads(manifest_path.read_text())
         for r in manifest.get("results", []):
             mid = r.get("model", "")
             if slugify(mid) == model_dir.name or model_dir.name in mid:
-                return (r.get("stdout") or "") + (r.get("stderr") or "")
+                return r
     except Exception:
         pass
-    return ""
+    return {}
+
+
+def _check_stdout(model_dir: Path) -> str:
+    result = _manifest_result(model_dir)
+    return "\n".join((result.get("stdout") or "", result.get("stderr") or ""))
 
 
 def check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) -> bool:
@@ -93,9 +89,8 @@ def check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) -> 
     if sid == "intent_gap_halt":
         spec = _find_spec(sandbox)
         fm = _parse_frontmatter(spec)
-        bc = str(fm.get("blocking_condition", "")).lower()
         body = spec.lower()
-        return fm.get("status") == "blocked" and ("intent gap" in bc or "intent gap" in body)
+        return fm.get("status") == "blocked" and "intent gap" in body
 
     if sid == "no_src_edit":
         return _file_hash(sandbox / "src" / "quota_sync.py") == baseline["src/quota_sync.py"]
@@ -107,22 +102,21 @@ def check_surface(surface: dict, sandbox: Path, baseline: dict, stdout: str) -> 
         return _file_hash(sandbox / "tests" / "unit" / "test_quota_sync.py") == baseline["tests/unit/test_quota_sync.py"]
 
     if sid == "no_question_asked":
-        return "question" not in stdout.lower()
-
-    if sid == "marker_written":
-        return bool(_parse_frontmatter(_find_marker(sandbox)).get("status"))
+        recorded_tools = _manifest_result(sandbox).get("tools")
+        tools = recorded_tools if recorded_tools is not None else tool_names(stdout)
+        return "question" not in tools
 
     if sid == "spec_written":
         spec = _find_spec(sandbox)
         fm = _parse_frontmatter(spec)
-        return bool(fm.get("blocking_condition")) or fm.get("status") == "blocked"
+        return fm.get("status") == "blocked" and "blocking condition:" in spec.lower()
 
     return False
 
 
 def _weighted_score(surfaces: list, results: list) -> float:
     by_cat: dict[str, list[bool]] = {}
-    for s, r in zip(surfaces, results):
+    for s, r in zip(surfaces, results, strict=True):
         by_cat.setdefault(s["category"], []).append(r["passed"])
     score = 0.0
     for cat, weight in _WEIGHT.items():
@@ -137,15 +131,17 @@ def evaluate_run(run_dir: Path) -> dict:
     baseline = fixture_hashes()
     rows = []
     for model_dir in _model_dirs(run_dir):
+        manifest_result = _manifest_result(model_dir)
         stdout = _check_stdout(model_dir)
         results = []
         for s in surfaces:
             passed = check_surface(s, model_dir, baseline, stdout)
             results.append({"surface": s["id"], "category": s["category"], "passed": passed})
-        score = _weighted_score(surfaces, results)
+        status = manifest_result.get("status", "unknown")
+        score = _weighted_score(surfaces, results) if status == "completed" else 0.0
         rows.append({
             "model_dir": model_dir.name,
-            "status": "completed",
+            "status": status,
             "score": score,
             "passed": sum(1 for r in results if r["passed"]),
             "total": len(surfaces),

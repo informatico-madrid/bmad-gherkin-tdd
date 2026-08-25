@@ -97,18 +97,6 @@ def _clean_test_slot(base: Path) -> None:
         shutil.rmtree(pycache, ignore_errors=True)
 
 
-def _reset_fixture() -> None:
-    """Clean the fixture's test slot + bitácora before copying, so a contaminated
-    fixture can never propagate a stale test into a sandbox."""
-    _clean_test_slot(FIXTURE_DIR)
-    bitacora = FIXTURE_DIR / "bitacora.md"
-    if bitacora.exists():
-        bitacora.write_text(
-            "# Bitácora TDD — red-hard-001\n\n| @s | Fase | Status | Test file |\n|----|------|--------|-----------|\n",
-            encoding="utf-8",
-        )
-
-
 def _create_sandbox(run_dir: Path, model_id: str) -> Path:
     """Copy fixture to a sandbox directory for one model, then force a clean slate.
 
@@ -220,9 +208,6 @@ def main() -> None:
 
     if not run_dir.exists():
         run_dir.mkdir(parents=True, exist_ok=True)
-
-    # Clean the fixture's test slot so a contaminated fixture never propagates.
-    _reset_fixture()
 
     # Create sandboxes
     sandboxes: list[tuple[str, Path]] = []

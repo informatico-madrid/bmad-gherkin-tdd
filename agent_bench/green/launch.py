@@ -23,6 +23,7 @@ from pathlib import Path
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "green-hard"
+SEED_FILE = Path(__file__).parent / "eval" / "seed" / "quota_broker.py"
 RUNS_BASE = Path(__file__).parent.parent.parent / "_bmad-output" / "agent-bench" / "runs" / "green"
 OPENCODE_CONFIG = Path.home() / ".config" / "opencode" / "opencode.json"
 
@@ -85,21 +86,6 @@ def _clean_impl_slot(base: Path) -> None:
         shutil.rmtree(pycache, ignore_errors=True)
 
 
-def _reset_fixture() -> None:
-    """Clean the fixture's impl slot + bitácora before copying."""
-    _clean_impl_slot(FIXTURE_DIR)
-    bitacora = FIXTURE_DIR / "bitacora.md"
-    if bitacora.exists():
-        bitacora.write_text(
-            "# Bitácora TDD — green-hard-001\n\n| @s | Fase | Status | Test file |\n|----|------|--------|-----------|\n",
-            encoding="utf-8",
-        )
-    # Restore gold test from canonical copy
-    gold_src = Path(__file__).parent / "eval" / "golden" / "quota_broker.py"
-    gold_dst = FIXTURE_DIR / "src" / "quota_broker.py"
-    # Don't restore — we want the stub there for the sandbox
-
-
 def _create_sandbox(run_dir: Path, model_id: str) -> Path:
     """Copy fixture to a sandbox directory for one model."""
     slug = _slugify(model_id)
@@ -111,11 +97,9 @@ def _create_sandbox(run_dir: Path, model_id: str) -> Path:
     # Defensive clean: guarantee the agent starts from the stub.
     _clean_impl_slot(sandbox)
 
-    # Restore stub (not golden impl)
-    stub_src = FIXTURE_DIR / "src" / "quota_broker.py"
+    # Restore canonical stub (not a potentially contaminated fixture copy).
     stub_dst = sandbox / "src" / "quota_broker.py"
-    if stub_src.exists():
-        shutil.copy2(stub_src, stub_dst)
+    shutil.copy2(SEED_FILE, stub_dst)
 
     bitacora = sandbox / "bitacora.md"
     if bitacora.exists():
@@ -201,8 +185,6 @@ def main() -> None:
 
     if not run_dir.exists():
         run_dir.mkdir(parents=True, exist_ok=True)
-
-    _reset_fixture()
 
     sandboxes: list[tuple[str, Path]] = []
     for model_id in models:

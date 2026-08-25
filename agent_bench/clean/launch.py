@@ -14,6 +14,7 @@ from pathlib import Path
 from agent_bench.common import resolve_models, slugify, clean_pycache, run_opencode
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "clean-hard"
+SEED_FILE = Path(__file__).parent / "eval" / "seed" / "quota_broker.py"
 RUNS_BASE = Path(__file__).parent.parent.parent / "_bmad-output" / "agent-bench" / "runs" / "clean"
 
 CLEAN_PROMPT = (
@@ -29,21 +30,15 @@ CLEAN_PROMPT = (
 )
 
 
-def _reset_fixture() -> None:
-    """Restore the dirty seed so a previous golden copy cannot contaminate runs."""
-    clean_pycache(FIXTURE_DIR)
-    seed = Path(__file__).parent / "eval" / "seed" / "quota_broker.py"
-    dest = FIXTURE_DIR / "src" / "quota_broker.py"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(seed, dest)
-
-
 def _create_sandbox(run_dir: Path, model_id: str) -> Path:
     slug = slugify(model_id)
     sandbox = run_dir / slug
     if sandbox.exists():
         shutil.rmtree(sandbox)
     shutil.copytree(FIXTURE_DIR, sandbox)
+    seed_dest = sandbox / "src" / "quota_broker.py"
+    seed_dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(SEED_FILE, seed_dest)
     clean_pycache(sandbox)
     return sandbox
 
@@ -70,7 +65,6 @@ def main() -> None:
     if not run_dir.exists():
         run_dir.mkdir(parents=True, exist_ok=True)
 
-    _reset_fixture()
     sandboxes = []
     for model_id in models:
         sb = _create_sandbox(run_dir, model_id)
