@@ -21,3 +21,16 @@ test_cmd = "uv run pytest"
 mutation_cmd = "make mutation-check"
 msi_minimum = 85
 coverage_required = 100
+
+# C4 advisory — deterministic RED-test assertion-shape analyzer run inside the
+# dev session between RED and GREEN. Advisory-only calibration: it never
+# authorizes GREEN and the LLM mutant-hunting review stays unconditional. The
+# installed script lives under _bmad/gherkin-tdd/scripts/ (managed by the
+# installer; uninstall removes it unless project-modified).
+red_test_advisor_cmd = "python _bmad/gherkin-tdd/scripts/red_test_advisor.py"
+
+# C1 shadow — empty = disabled (default). A project-owned shadow mutation
+# command is measurement-only: it runs before the full, requires
+# warm-cache/evidence support owned by the project, and can never close
+# RELEASE. Keep empty unless the project implements and enables that support.
+mutation_shadow_cmd = ""

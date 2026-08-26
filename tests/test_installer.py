@@ -45,7 +45,12 @@ def test_install_copies_support_files(project: Path) -> None:
     assert (project / "opencode" / "agents" / "opencode.json.template").is_file()
     assert (project / "_bmad" / "gherkin-tdd" / "scripts" / "cleaner_gate.py").is_file()
     assert (project / "_bmad" / "gherkin-tdd" / "scripts" / "principles.py").is_file()
-    assert (project / "_bmad" / "gherkin-tdd" / "scripts" / "scan_mutation_sites.py").is_file()
+    assert (
+        project / "_bmad" / "gherkin-tdd" / "scripts" / "scan_mutation_sites.py"
+    ).is_file()
+    assert (
+        project / "_bmad" / "gherkin-tdd" / "scripts" / "red_test_advisor.py"
+    ).is_file()
     for name in installer.PROFILE_NAMES:
         assert (project / ".bmad-loop" / "profiles" / name).is_file()
     for name in installer.TEMPLATE_NAMES:
@@ -124,8 +129,44 @@ def test_status_reflects_install(project: Path) -> None:
     installer.install(project, project / ".agents" / "skills")
     st = installer.status(project)
     assert st["installed"] is True
-    assert st["version"] == "0.1.3"
+    assert st["version"] == "0.1.4"
     assert installer.manifest_path(project).is_file()
+
+
+def test_managed_path_replaced_by_symlink_is_rejected_never_resolved(
+    project: Path,
+) -> None:
+    """Regression guard (plan Phase 7): a managed file replaced by a symlink to
+    an in-project file whose bytes MATCH the recorded manifest hash must still
+    be rejected as itself — status reports it missing and uninstall preserves
+    the link instead of treating the aliased bytes as the managed file."""
+    installer.install(project, project / ".agents" / "skills")
+
+    scripts_dir = project / "_bmad" / "gherkin-tdd" / "scripts"
+    victim = scripts_dir / "cleaner_gate.py"
+    original_bytes = victim.read_bytes()
+    decoy = scripts_dir / "decoy_same_bytes.py"
+    decoy.write_bytes(original_bytes)
+    victim.unlink()
+    victim.symlink_to(decoy)
+    # The alias really does carry the recorded bytes — only the link itself
+    # distinguishes it from the managed file.
+    manifest = json.loads(installer.manifest_path(project).read_text(encoding="utf-8"))
+    recorded_hash = manifest["files"]["_bmad/gherkin-tdd/scripts/cleaner_gate.py"]
+    assert installer._sha256(decoy) == recorded_hash
+
+    st = installer.status(project)
+    assert "_bmad/gherkin-tdd/scripts/cleaner_gate.py" in st["missing"]
+    assert st["healthy"] is False
+
+    report = installer.uninstall(project)
+
+    assert (
+        report["removed:_bmad/gherkin-tdd/scripts/cleaner_gate.py"]
+        == "preserved (modified since install)"
+    )
+    assert victim.is_symlink()
+    assert decoy.read_bytes() == original_bytes
 
 
 def test_cli_install_and_status(tmp_path: Path) -> None:

@@ -304,3 +304,107 @@ def _first_match_position(content: str, needle: str) -> int:
     """
     pos = content.find(needle)
     return pos if pos >= 0 else -1
+
+
+# --- C4 advisory (c1-c4-safe-speed-plan, Phase 7) ---
+# The deterministic red_test_advisor runs inside the DEV session between RED and
+# GREEN: analyze before the LLM mutant-hunting review, compare after, and the
+# LLM review stays unconditional. The advisor is advisory-only: no hooks, no
+# GREEN authority. These guards pin the advisory contract in the coordinator-
+# facing sources shipped by the module.
+
+C4_ADVISORY_COORDINATOR_SOURCES: list[tuple[str, Path]] = [
+    (
+        "bmad-tdd-coordinator/SKILL.md",
+        PROJECT_ROOT / "skills" / "bmad-tdd-coordinator" / "SKILL.md",
+    ),
+    (
+        "bmad-tdd-coordinator/prompt.txt",
+        PROJECT_ROOT / "skills" / "bmad-tdd-coordinator" / "prompt.txt",
+    ),
+    (
+        "templates/custom/bmad-tdd-coordinator.toml",
+        PROJECT_ROOT / "templates" / "custom" / "bmad-tdd-coordinator.toml",
+    ),
+]
+
+C4_ADVISORY_REQUIRED_TERMS: list[str] = [
+    "red_test_advisor.py",
+    "red_test_advisor.py analyze",
+    "red_test_advisor.py compare",
+    "regardless of the advisor verdict",
+    "never authorizes GREEN",
+]
+
+C4_REVIEW_MARKER = "MUTANT-HUNTING REVIEW"
+
+C4_RED_HANDOFF_SOURCES: list[tuple[str, Path]] = [
+    ("tdd-red/SKILL.md", PROJECT_ROOT / "skills" / "tdd-red" / "SKILL.md"),
+    ("tdd-red/prompt.txt", PROJECT_ROOT / "skills" / "tdd-red" / "prompt.txt"),
+]
+
+
+@pytest.mark.parametrize("label, path", C4_ADVISORY_COORDINATOR_SOURCES, ids=lambda p: str(p))
+def test_c4_advisory_terms_present(label: str, path: Path) -> None:
+    """Each coordinator-facing source must document the full advisory flow:
+    analyze + compare commands, the unconditional LLM review, and the explicit
+    statement that the advisor verdict never authorizes GREEN."""
+    assert path.exists(), f"C4 source missing: {path}"
+    content = path.read_text(encoding="utf-8")
+
+    missing = [term for term in C4_ADVISORY_REQUIRED_TERMS if term not in content]
+    assert not missing, (
+        f"C4 source '{label}' ({path}) is missing advisory terms:\n"
+        + "\n".join(f"  - {item}" for item in missing)
+    )
+
+
+@pytest.mark.parametrize("label, path", C4_ADVISORY_COORDINATOR_SOURCES, ids=lambda p: str(p))
+def test_c4_order_analyze_before_review_before_compare(label: str, path: Path) -> None:
+    """The source must sequence: advisor analyze -> LLM mutant-hunting review ->
+    advisor compare."""
+    assert path.exists(), f"C4 source missing: {path}"
+    content = path.read_text(encoding="utf-8")
+
+    analyze_pos = _first_match_position(content, "red_test_advisor.py analyze")
+    review_pos = _first_match_position(content, C4_REVIEW_MARKER)
+    compare_pos = _first_match_position(content, "red_test_advisor.py compare")
+
+    for name, pos in (
+        ("red_test_advisor.py analyze", analyze_pos),
+        (C4_REVIEW_MARKER, review_pos),
+        ("red_test_advisor.py compare", compare_pos),
+    ):
+        assert pos >= 0, f"C4 source '{label}' ({path}) is missing '{name}'"
+    assert analyze_pos < review_pos < compare_pos, (
+        f"C4 source '{label}' ({path}) must order analyze -> review -> compare; "
+        f"found analyze@{analyze_pos} review@{review_pos} compare@{compare_pos}"
+    )
+
+
+def test_c4_advisor_script_installed_by_module() -> None:
+    """The module must ship the byte-identical advisor and register it in the
+    installer FILE_INSTALLS mapping."""
+    import bmad_gherkin_tdd.installer as installer
+
+    bundled = installer.payload("scripts/red_test_advisor.py")
+    assert bundled.is_file(), "red_test_advisor.py missing from the module payload"
+    assert (
+        installer.FILE_INSTALLS.get("_bmad/gherkin-tdd/scripts/red_test_advisor.py")
+        == "scripts/red_test_advisor.py"
+    ), "installer must map the advisory analyzer into the managed tree"
+
+
+@pytest.mark.parametrize("label, path", C4_RED_HANDOFF_SOURCES, ids=lambda p: str(p))
+def test_c4_red_handoff_requires_exact_nodeids(label: str, path: Path) -> None:
+    """The RED handoff contract must require exact repo-relative test paths and
+    nodeids plus the failing pytest command — the advisor cannot run without
+    them and must not guess a broader file."""
+    assert path.exists(), f"RED source missing: {path}"
+    lower = path.read_text(encoding="utf-8").lower()
+
+    missing = [term for term in ("nodeids", "failing pytest") if term not in lower]
+    assert not missing, (
+        f"RED handoff source '{label}' ({path}) is missing terms:\n"
+        + "\n".join(f"  - {item}" for item in missing)
+    )

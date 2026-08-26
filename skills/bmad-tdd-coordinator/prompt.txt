@@ -37,7 +37,26 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
         prompt="[contexto: scenario @s<k> del .feature + instructions]"
       )
       ```
-      → escribir test fallido desde el escenario del contrato
+       → escribir test fallido desde el escenario del contrato
+
+      ADVISOR C4 (obligatorio, no bloqueante, ANTES del review): con los nodeids
+      EXACTOS del RED handoff contract correr UN comando:
+        python _bmad/gherkin-tdd/scripts/red_test_advisor.py analyze \
+          --project-root . --evidence-root <run-dir>/evidence/red-test-advisor \
+          --scenario-id @s<k> --target <nodeid> \
+          --output <run-dir>/evidence/red-test-advisor/advisor-<story>-s<k>.json
+      Veredicto shape-only: calibración; NUNCA sustituye ni condiciona el review.
+      Infra fallo → registrar y seguir (retry máx 1).
+
+      Tras el MUTANT-HUNTING REVIEW (SIEMPRE, regardless of the advisor verdict),
+      persistir el texto bounded del review + su label y correr:
+        python _bmad/gherkin-tdd/scripts/red_test_advisor.py compare \
+          --advisor <advisor.json> --llm-verdict <strong|weak|unsupported> \
+          --llm-review <review.txt> --evidence-root <run-dir>/evidence/red-test-advisor \
+          --output <comparison.json>
+      Calibración only: el advisor verdict never authorizes GREEN — decide SOLO
+      el review LLM; registrar paths/hashes en bitácora; NUNCA `certified`.
+
 
       ```
       task(
@@ -83,6 +102,9 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
   ejecuta el coordinador, UNA vez tras el último @s. La mutación completa NO es de
   REFACTOR: el subagente tdd-refactor-ornith solo refactoriza y confirma pytest PASS.
   Inspección de mutantes con `mutmut show <name>` / `mutmut run '<name>'` (dirigida).
+- C4 advisor (advisory-only): `red_test_advisor.py analyze` ANTES del review,
+  `compare` DESPUÉS; el review corre siempre regardless of the advisor verdict y
+  su verdict never authorizes GREEN; NUNCA `certified`; sin cambios en hooks.
 - NUNCA skip phases (RED→GREEN→CLEAN→REFACTOR es obligatorio)
 - NUNCA marcar review/done sin los gates de RELEASE verdes
 - SKIPPED no es GREEN: un AC de ejecución en vivo cerrado con SKIPPED es ROJO -> story `blocked`

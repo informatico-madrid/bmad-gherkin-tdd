@@ -13,7 +13,7 @@ from pathlib import Path
 
 MODULE_CODE = "gherkin-tdd"
 MODULE_NAME = "BMAD Gherkin TDD"
-MODULE_VERSION = "0.1.3"
+MODULE_VERSION = "0.1.4"
 
 SKILL_NAMES = (
     "bmad-loop-coordinator",
@@ -33,6 +33,7 @@ FILE_INSTALLS = {
     "_bmad/gherkin-tdd/scripts/cleaner_gate.py": "scripts/cleaner_gate.py",
     "_bmad/gherkin-tdd/scripts/principles.py": "scripts/principles.py",
     "_bmad/gherkin-tdd/scripts/scan_mutation_sites.py": "scripts/scan_mutation_sites.py",
+    "_bmad/gherkin-tdd/scripts/red_test_advisor.py": "scripts/red_test_advisor.py",
     "hooks/tdd_cycle_gate.py": "hooks/tdd_cycle_gate.py",
     ".opencode/plugins/tdd-cycle-gate.js": "opencode/plugins/tdd-cycle-gate.js",
     "opencode/agents/opencode.json.template": "opencode/agents/opencode.json.template",

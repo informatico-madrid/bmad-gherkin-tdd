@@ -163,6 +163,23 @@ es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
       El subagente tdd-red-ornith tiene su propio contexto y puede escribir archivos de test.
       Esperar a que complete (test escrito + pytest FAIL confirmado).
 
+      **C4 ADVISOR — RED TEST ANALYSIS (coordinador, obligatorio, no bloqueante):**
+          Con los paths/nodeids EXACTOS del RED handoff contract, ejecutar ANTES del
+          review LLM (un comando, sin operadores de shell):
+
+              python _bmad/gherkin-tdd/scripts/red_test_advisor.py analyze \
+                --project-root . \
+                --evidence-root <run-dir>/evidence/red-test-advisor \
+                --scenario-id @s<k> \
+                --target <nodeid-exacto> \
+                --output <run-dir>/evidence/red-test-advisor/advisor-<story>-s<k>.json
+
+          (El script exacto sale de `{workflow.red_test_advisor_cmd}`; en loop el
+          run-dir es `$BMAD_LOOP_RUN_DIR`.) El veredicto (`strong|weak|unsupported`)
+          es SHAPE estático: registra calibración y NO sustituye el review.
+          Fallo/infra → registrar y continuar; reintentos máx 1 por error de
+          invocación obvio.
+
       **MUTANT-HUNTING REVIEW (coordinador, NO delegar):**
           ANTES de pasar a GREEN, el coordinador DEBE revisar el test del RED:
           1. Leer el archivo de test completo
@@ -184,6 +201,22 @@ es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
           5. Si el test ES robusto:
              - Documentar la revisión en la bitácora
              - Pasar a GREEN
+
+      **C4 ADVISOR — COMPARISON (SIEMPRE tras el review, regardless of the advisor verdict):**
+          Persistir el texto bounded del review + su label explícito
+          (`strong|weak|unsupported`) y ejecutar:
+
+              python _bmad/gherkin-tdd/scripts/red_test_advisor.py compare \
+                --advisor <advisor.json> \
+                --llm-verdict <label> \
+                --llm-review <review.txt> \
+                --evidence-root <run-dir>/evidence/red-test-advisor \
+                --output <comparison.json>
+
+          Calibración only: el advisor verdict never authorizes GREEN — la decisión
+          de volver a RED o pasar a GREEN sigue siendo EXCLUSIVAMENTE el review LLM.
+          Registrar paths/hashes de ambos artifacts en la bitácora; NUNCA usar
+          `certified` ni ningún claim de certificación.
 
       ```
       task(

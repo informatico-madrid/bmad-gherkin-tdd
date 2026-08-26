@@ -1,0 +1,250 @@
+[
+  {
+    "name": "strong-equality-call-derived",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def make():\n    return 41\n\n\ndef test_value():\n    result = make()\n    assert result == 42\n"
+    },
+    "targets": ["pkg/test_mod.py::test_value"],
+    "expected_verdict": "strong",
+    "expected_rule_ids": ["exact-equality-call-derived"]
+  },
+  {
+    "name": "strong-identity-true",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def compute():\n    return True\n\n\ndef test_flag():\n    flag = compute()\n    assert flag is True\n"
+    },
+    "targets": ["pkg/test_mod.py::test_flag"],
+    "expected_verdict": "strong",
+    "expected_rule_ids": ["exact-equality-call-derived"]
+  },
+  {
+    "name": "strong-cardinality-len-eq",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def build():\n    return []\n\n\ndef test_items():\n    items = build()\n    assert len(items) == 3\n"
+    },
+    "targets": ["pkg/test_mod.py::test_items"],
+    "expected_verdict": "strong",
+    "expected_rule_ids": ["exact-cardinality-call-derived"]
+  },
+  {
+    "name": "strong-membership-literal",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def lookup():\n    return \"alpha\"\n\n\ndef test_name():\n    name = lookup()\n    assert name in (\"alpha\", \"beta\")\n"
+    },
+    "targets": ["pkg/test_mod.py::test_name"],
+    "expected_verdict": "strong",
+    "expected_rule_ids": ["membership-call-derived"]
+  },
+  {
+    "name": "strong-raises-specific-match",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "import pytest\n\n\ndef detonate():\n    raise ValueError(\"boom\")\n\n\ndef test_raises():\n    with pytest.raises(ValueError, match=\"boom\"):\n        detonate()\n"
+    },
+    "targets": ["pkg/test_mod.py::test_raises"],
+    "expected_verdict": "strong",
+    "expected_rule_ids": ["raises-specific-with-match"],
+    "forbidden_rule_ids": ["no-behavior-assertion"]
+  },
+  {
+    "name": "strong-mock-exact-args",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def test_publish(bus):\n    bus.send(\"payload\", retries=2)\n    bus.send.assert_called_once_with(\"payload\", retries=2)\n"
+    },
+    "targets": ["pkg/test_mod.py::test_publish"],
+    "expected_verdict": "strong",
+    "expected_rule_ids": ["interaction-exact-args"],
+    "forbidden_rule_ids": ["no-behavior-assertion"]
+  },
+  {
+    "name": "strong-has-calls-order",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "from unittest.mock import call\n\n\ndef test_sequence(emitter):\n    emitter.emit(\"a\")\n    emitter.emit(\"b\")\n    emitter.emit.assert_has_calls([call(\"a\"), call(\"b\")])\n"
+    },
+    "targets": ["pkg/test_mod.py::test_sequence"],
+    "expected_verdict": "strong",
+    "expected_rule_ids": ["interaction-exact-args"],
+    "forbidden_rule_ids": ["no-behavior-assertion"]
+  },
+  {
+    "name": "weak-bare-truthiness",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def run():\n    return 0\n\n\ndef test_run():\n    result = run()\n    assert result\n"
+    },
+    "targets": ["pkg/test_mod.py::test_run"],
+    "expected_verdict": "weak",
+    "expected_rule_ids": ["bare-truthiness"],
+    "forbidden_rule_ids": ["exact-equality-call-derived"]
+  },
+  {
+    "name": "weak-is-none",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def fetch():\n    return None\n\n\ndef test_missing():\n    assert fetch() is None\n"
+    },
+    "targets": ["pkg/test_mod.py::test_missing"],
+    "expected_verdict": "weak",
+    "expected_rule_ids": ["none-identity"]
+  },
+  {
+    "name": "weak-is-not-none",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def factory():\n    return object()\n\n\ndef test_created():\n    assert factory() is not None\n"
+    },
+    "targets": ["pkg/test_mod.py::test_created"],
+    "expected_verdict": "weak",
+    "expected_rule_ids": ["none-identity"]
+  },
+  {
+    "name": "weak-type-only-check",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "class Widget:\n    pass\n\n\ndef make():\n    return Widget()\n\n\ndef test_type():\n    assert isinstance(make(), Widget)\n"
+    },
+    "targets": ["pkg/test_mod.py::test_type"],
+    "expected_verdict": "weak",
+    "expected_rule_ids": ["type-only-check"]
+  },
+  {
+    "name": "weak-loose-cardinality",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def build():\n    return []\n\n\ndef test_nonempty():\n    items = build()\n    assert len(items) > 0\n"
+    },
+    "targets": ["pkg/test_mod.py::test_nonempty"],
+    "expected_verdict": "weak",
+    "expected_rule_ids": ["loose-cardinality"]
+  },
+  {
+    "name": "weak-broad-raises",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "import pytest\n\n\ndef detonate():\n    raise ValueError(\"boom\")\n\n\ndef test_any_error():\n    with pytest.raises(Exception):\n        detonate()\n"
+    },
+    "targets": ["pkg/test_mod.py::test_any_error"],
+    "expected_verdict": "weak",
+    "expected_rule_ids": ["raises-broad-exception"]
+  },
+  {
+    "name": "weak-mock-count-only",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def test_once(bus):\n    bus.ping()\n    bus.ping.assert_called_once()\n"
+    },
+    "targets": ["pkg/test_mod.py::test_once"],
+    "expected_verdict": "weak",
+    "expected_rule_ids": ["mock-count-only"]
+  },
+  {
+    "name": "weak-no-behavior-assertion",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def prepare():\n    return 1\n\n\ndef test_only_calls():\n    prepare()\n"
+    },
+    "targets": ["pkg/test_mod.py::test_only_calls"],
+    "expected_verdict": "weak",
+    "expected_rule_ids": ["no-behavior-assertion"]
+  },
+  {
+    "name": "weak-setup-only-constant",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "CONFIG = {\"mode\": \"fast\"}\n\n\ndef test_config():\n    assert CONFIG[\"mode\"] == \"fast\"\n"
+    },
+    "targets": ["pkg/test_mod.py::test_config"],
+    "expected_verdict": "weak",
+    "expected_rule_ids": ["assertion-not-call-derived"]
+  },
+  {
+    "name": "precedence-weak-over-strong",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def make():\n    return 42\n\n\ndef test_mixed():\n    result = make()\n    assert result == 42\n    assert result\n"
+    },
+    "targets": ["pkg/test_mod.py::test_mixed"],
+    "expected_verdict": "weak",
+    "expected_rule_ids": ["exact-equality-call-derived", "bare-truthiness"]
+  },
+  {
+    "name": "unsupported-syntax-error",
+    "scenario_id": "@s1",
+    "files": {"pkg/broken.py": "def broken(:\n    pass\n"},
+    "targets": ["pkg/broken.py::test_broken"],
+    "expected_verdict": "unsupported",
+    "expected_unsupported_reasons": ["syntax-error"]
+  },
+  {
+    "name": "unsupported-non-python",
+    "scenario_id": "@s1",
+    "files": {"pkg/notes.txt": "hello\n"},
+    "targets": ["pkg/notes.txt::check"],
+    "expected_verdict": "unsupported",
+    "expected_unsupported_reasons": ["non-python-file"]
+  },
+  {
+    "name": "unsupported-missing-target",
+    "scenario_id": "@s1",
+    "files": {"pkg/test_mod.py": "def other():\n    return 1\n"},
+    "targets": ["pkg/test_mod.py::test_absent"],
+    "expected_verdict": "unsupported",
+    "expected_unsupported_reasons": ["ambiguous-or-missing-target"]
+  },
+  {
+    "name": "unsupported-dynamic-exec",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def test_dynamic():\n    exec(\"assert True\")\n"
+    },
+    "targets": ["pkg/test_mod.py::test_dynamic"],
+    "expected_verdict": "unsupported",
+    "expected_unsupported_reasons": ["dynamic-exec"]
+  },
+  {
+    "name": "unsupported-escaped-nodeid",
+    "scenario_id": "@s1",
+    "files": {"pkg/test_mod.py": "def test_x():\n    assert 1 == 1\n"},
+    "targets": ["pkg/test_mod.py::test_x[unclosed"],
+    "expected_verdict": "unsupported",
+    "expected_unsupported_reasons": ["unsupported-nodeid"]
+  },
+  {
+    "name": "parametrized-suffix-stripped",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def make():\n    return 7\n\n\ndef test_case():\n    value = make()\n    assert value == 7\n"
+    },
+    "targets": ["pkg/test_mod.py::test_case[case-a]"],
+    "expected_verdict": "strong",
+    "expected_rule_ids": ["exact-equality-call-derived"],
+    "expected_entry_target": "pkg/test_mod.py::test_case"
+  },
+  {
+    "name": "class-method-selected",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def two():\n    return 2\n\n\nclass TestMath:\n    def test_two(self):\n        value = two()\n        assert value == 2\n"
+    },
+    "targets": ["pkg/test_mod.py::TestMath::test_two"],
+    "expected_verdict": "strong",
+    "expected_rule_ids": ["exact-equality-call-derived"]
+  },
+  {
+    "name": "shape-strong-unrelated-call-not-certification",
+    "scenario_id": "@s1",
+    "files": {
+      "pkg/test_mod.py": "def helper():\n    return 5\n\n\ndef subject():\n    return 9\n\n\ndef test_unrelated():\n    assert helper() == 5\n"
+    },
+    "targets": ["pkg/test_mod.py::test_unrelated"],
+    "expected_verdict": "strong",
+    "expected_rule_ids": ["exact-equality-call-derived"],
+    "note": "Shape-strong only: the LLM review owns semantic-subject adequacy."
+  }
+]

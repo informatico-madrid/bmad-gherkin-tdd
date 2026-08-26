@@ -57,5 +57,6 @@ jobs:
               assert any("payload/skills/bmad-tdd-coordinator/SKILL.md" in n for n in payload)
               assert any("payload/skills/bmad-loop-coordinator/SKILL.md" in n for n in payload)
               assert any("payload/opencode/plugins/tdd-cycle-gate.js" in n for n in payload)
+              assert any("payload/scripts/red_test_advisor.py" in n for n in payload)
           print(f"payload files in wheel: {len(payload)}")
           EOF

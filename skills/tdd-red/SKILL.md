@@ -68,6 +68,20 @@ description: TDD RED Phase write failing test with PERSISTENT_PROMPT_CONSTRAINTS
 - Bitacora TDD actualizada (ROJO status)
 - Confirmacion de que test FAIL
 
+## RED Handoff Contract (C4 advisory)
+
+El reporte de vuelta al coordinador DEBE incluir un bloque machine-readable con:
+
+- Paths exactos (repo-relative) de CADA archivo de test escrito/modificado
+- Nodeids pytest exactos de cada test nuevo (`file.py::TestClass::test_name`)
+- El failing pytest command ejecutado y su resultado FAIL (resumen bounded)
+
+Estos targets alimentan el advisor C4 (`{workflow.red_test_advisor_cmd}` por
+defecto `python _bmad/gherkin-tdd/scripts/red_test_advisor.py`, análisis estático
+advisory-only). Sin ellos el coordinador NO puede ejecutar el análisis y lo
+registra como `unsupported`. NUNCA inventes ni amplíes nodeids: devuelve los
+exactos que escribiste y el comando real.
+
 ## Error Handling
 
 - Si pytest no muestra FAIL: STOP y reportar

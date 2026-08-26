@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- C4 deterministic RED-test advisor (`red_test_advisor.py`): a pure-stdlib AST
+  analyzer that classifies RED-test assertion shapes (exact equality over a
+  call-derived value, broad truthiness, count-only mocks, ...) and records
+  agreement with the LLM mutant-hunting review. Advisory-only: it never
+  executes test code, changes no hooks, and `strong` means strong assertion
+  shape — the LLM review stays unconditional and solely authoritative. Shipped
+  byte-identical in both consuming projects; installed by this module at
+  `_bmad/gherkin-tdd/scripts/red_test_advisor.py` and wired through
+  `{workflow.red_test_advisor_cmd}` plus the RED handoff contract (exact
+  nodeids + failing pytest command).
+- Coordinator workflow keys: `red_test_advisor_cmd` (default installed path)
+  and `mutation_shadow_cmd` (empty = disabled; reserved for project-owned,
+  measurement-only shadow mutation support).
 - `bmad-dev-auto` override template ships a SCOPE SPLIT GATE: an oversized or
   multi-goal intent now HALTs with blocking condition `story split required`
   instead of continuing on a warning-only signal.
