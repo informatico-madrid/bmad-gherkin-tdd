@@ -17,3 +17,6 @@ bmad-plugins-marketplace/
 .opencode/
 _bmad/
 _bmad-output/
+
+# GBrain-generated (resolver health check; routing table for workspace skills — not source)
+skills/RESOLVER.md
