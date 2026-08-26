@@ -45,12 +45,8 @@ def test_install_copies_support_files(project: Path) -> None:
     assert (project / "opencode" / "agents" / "opencode.json.template").is_file()
     assert (project / "_bmad" / "gherkin-tdd" / "scripts" / "cleaner_gate.py").is_file()
     assert (project / "_bmad" / "gherkin-tdd" / "scripts" / "principles.py").is_file()
-    assert (
-        project / "_bmad" / "gherkin-tdd" / "scripts" / "scan_mutation_sites.py"
-    ).is_file()
-    assert (
-        project / "_bmad" / "gherkin-tdd" / "scripts" / "red_test_advisor.py"
-    ).is_file()
+    assert (project / "_bmad" / "gherkin-tdd" / "scripts" / "scan_mutation_sites.py").is_file()
+    assert (project / "_bmad" / "gherkin-tdd" / "scripts" / "red_test_advisor.py").is_file()
     for name in installer.PROFILE_NAMES:
         assert (project / ".bmad-loop" / "profiles" / name).is_file()
     for name in installer.TEMPLATE_NAMES:
