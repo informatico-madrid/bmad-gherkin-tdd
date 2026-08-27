@@ -117,6 +117,32 @@ def _pytest_outcome(outcome: str, stdout: str = "") -> dict:
     }
 
 
+def _verification_outcome(command: str, exit_code: int | None, output: str = "") -> dict:
+    return {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+        "tool_response": {
+            "title": command,
+            "output": output,
+            "metadata": {"exit": exit_code, "truncated": False},
+        },
+    }
+
+
+def _write_coordinator_config(workspace: Path, **workflow: object) -> None:
+    custom = workspace / "_bmad" / "custom"
+    custom.mkdir(parents=True, exist_ok=True)
+    lines = ["[workflow]"]
+    for key, value in workflow.items():
+        encoded = str(value).lower() if isinstance(value, bool) else json.dumps(value)
+        lines.append(f"{key} = {encoded}")
+    (custom / "bmad-tdd-coordinator.toml").write_text(
+        "\n".join(lines) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _edit_test_file() -> dict:
     """PostToolUse Edit of a tests/** file — marks the RED test as written."""
     return {
@@ -129,14 +155,33 @@ def _edit_test_file() -> dict:
     }
 
 
-def _task_post(agent: str, *, tool_response: object | None = None) -> dict:
+_TASK_RESPONSE_UNSET = object()
+
+
+def _task_post(agent: str, *, tool_response: object = _TASK_RESPONSE_UNSET) -> dict:
     """PostToolUse Task completion — the subagent-session bridge (A0 port)."""
-    payload: dict = {
+    phase = agent.removeprefix("tdd-").removesuffix("-ornith").upper()
+    evidence = {
+        "agent": agent,
+        "phase": phase,
+        "status": "PASS",
+        "test_exit": 1 if phase == "RED" else 0,
+        "bitacora": {
+            "RED": "ROJO",
+            "GREEN": "VERDE",
+            "CLEAN": "CLEAN",
+            "REFACTOR": "REFACTOR",
+        }.get(phase, phase),
+    }
+    payload = {
         "hook_event_name": "PostToolUse",
         "tool_name": "Task",
         "tool_input": {"subagent_type": agent},
+        "tool_response": {
+            "output": f"BMAD_TDD_PHASE_RESULT: {json.dumps(evidence, sort_keys=True)}"
+        },
     }
-    if tool_response is not None:
+    if tool_response is not _TASK_RESPONSE_UNSET:
         payload["tool_response"] = tool_response
     return payload
 
@@ -426,6 +471,104 @@ def test_pytest_pass_coding_to_green_seen(tmp_path: Path) -> None:
 
     state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
     assert state["phase"] == "GREEN_SEEN"
+
+
+def test_configured_verifier_exit_codes_drive_red_and_green(tmp_path: Path) -> None:
+    workspace = _setup_workspace(tmp_path)
+    _write_coordinator_config(workspace, test_cmd="npm run verify")
+
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))
+    _run_gate(workspace, _skill("tdd-red"))
+    _run_gate(
+        workspace,
+        _verification_outcome("npm run verify", 1, "TypeScript compilation failed"),
+    )
+
+    state_path = workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json"
+    assert json.loads(state_path.read_text())["phase"] == "RED_SEEN"
+
+    _run_gate(workspace, _edit_story("ROJO: configured verifier failed"))
+    _run_gate(workspace, _task("tdd-green-ornith"))
+    _run_gate(workspace, _skill("tdd-green"))
+    _run_gate(
+        workspace,
+        _verification_outcome("npm run verify", 0, "# pass 4\n# fail 0"),
+    )
+
+    assert json.loads(state_path.read_text())["phase"] == "GREEN_SEEN"
+
+
+def test_nonmatching_command_exit_does_not_drive_state(tmp_path: Path) -> None:
+    workspace = _setup_workspace(tmp_path)
+    _write_coordinator_config(workspace, test_cmd="npm run verify")
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))
+    _run_gate(workspace, _skill("tdd-red"))
+
+    for command in (
+        "npm test",
+        "npm run verify --help",
+        "npm run verify && unrelated-command",
+    ):
+        _run_gate(workspace, _verification_outcome(command, 1, "failed"))
+
+    state_path = workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json"
+    assert json.loads(state_path.read_text())["phase"] == "READY"
+
+
+def test_unrelated_command_containing_pytest_does_not_drive_state(tmp_path: Path) -> None:
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+
+    _run_gate(
+        workspace,
+        _verification_outcome(
+            "python -c \"print('pytest 1 failed')\"",
+            1,
+            "pytest 1 failed",
+        ),
+    )
+
+    state_path = workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json"
+    assert json.loads(state_path.read_text())["phase"] == "READY"
+
+
+def test_false_applicability_requires_an_auditable_reason(tmp_path: Path) -> None:
+    workspace = _setup_workspace(tmp_path)
+    _write_coordinator_config(workspace, cleaner_applicable=False)
+
+    rc, _, stderr = _run_gate(workspace, _bash("git status"))
+
+    assert rc == 2
+    assert "cleaner_na_reason" in stderr
+
+    _write_coordinator_config(
+        workspace,
+        cleaner_applicable=False,
+        cleaner_na_reason="No cleaner exists for this bootstrap stack",
+    )
+    rc, _, stderr = _run_gate(workspace, _bash("git status"))
+    assert rc == 0
+    assert stderr == ""
+
+
+def test_configured_production_prefix_protects_typescript_source(tmp_path: Path) -> None:
+    workspace = _setup_workspace(tmp_path)
+    _write_coordinator_config(workspace, prod_prefix="app/")
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": "app/shared/application/release-derived-result.ts",
+            "new_string": "export const release = true;",
+        },
+    }
+
+    rc, _, stderr = _run_gate(workspace, payload)
+
+    assert rc == 2
+    assert "test" in stderr.lower() or "tdd" in stderr.lower()
 
 
 def test_verde_bitacora_drives_green_seen_to_clean(tmp_path: Path) -> None:
@@ -1504,14 +1647,24 @@ def test_internal_exception_fail_closed_in_loop_mode(tmp_path: Path) -> None:
     try:
         old_func = (
             "def _handle_loop_mode_pre_tool_use"
-            "(tool_name: str, tool_input: dict, state: State) -> None:\n"
+            "(\n"
+            "    tool_name: str,\n"
+            "    tool_input: dict,\n"
+            "    state: State,\n"
+            '    hook_session_id: str = "",\n'
+            ") -> None:\n"
             '    """Loop-mode PreToolUse handler:'
             " observes skills, blocks bash writes,"
             ' enforces cycle."""'
         )
         new_func = (
             "def _handle_loop_mode_pre_tool_use"
-            "(tool_name: str, tool_input: dict, state: State) -> None:\n"
+            "(\n"
+            "    tool_name: str,\n"
+            "    tool_input: dict,\n"
+            "    state: State,\n"
+            '    hook_session_id: str = "",\n'
+            ") -> None:\n"
             '    raise RuntimeError("simulated internal error")\n'
         )
         patched = original.replace(old_func, new_func, 1)
@@ -2329,6 +2482,69 @@ def test_task_post_red_ornith_advances_ready_to_coding(tmp_path: Path) -> None:
     assert state["red_pending"] is False
 
 
+def test_task_post_requires_coordinator_visible_evidence(tmp_path: Path) -> None:
+    """A successful-looking Task without its result marker cannot advance state."""
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))
+
+    payload = _task_post("tdd-red-ornith")
+    payload.pop("tool_response")
+    rc, _, stderr = _run_gate(workspace, payload)
+
+    assert rc == 2
+    assert "evidencia" in stderr.lower()
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["phase"] == "READY"
+    assert state["pending_task"] == "tdd-red-ornith"
+    assert "tdd-red" not in state["skill_seen"]
+
+
+def test_task_post_survives_matching_child_skill_invocation(tmp_path: Path) -> None:
+    """A child Skill hook must not consume its parent Task pairing."""
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+
+    task = _task("tdd-green-ornith")
+    task["tool_input"]["prompt"] = "classification=verification_preexisting existing TDD evidence"
+    task["session_id"] = "ses_parent"
+    _run_gate(workspace, task)
+
+    # OpenCode can run the phase Skill in the child session while the parent
+    # Task is still pending; the completion marker must close that pairing.
+    child_skill = _skill("tdd-green")
+    child_skill["session_id"] = "ses_child"
+    _run_gate(workspace, child_skill)
+
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["pending_task"] == "tdd-green-ornith"
+
+    task_post = _task_post("tdd-green-ornith")
+    task_post["session_id"] = "ses_parent"
+    rc, _, _ = _run_gate(workspace, task_post)
+    assert rc == 0
+
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["pending_task"] == ""
+    assert state["phase"] == "CLEAN"
+
+
+def test_task_post_rejects_failed_task_response(tmp_path: Path) -> None:
+    """A failed Task response cannot be converted into a phase transition."""
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))
+
+    payload = _task_post("tdd-red-ornith")
+    payload["tool_response"]["metadata"] = {"exit": 1}
+    rc, _, stderr = _run_gate(workspace, payload)
+
+    assert rc == 2
+    assert "evidencia" in stderr.lower()
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["phase"] == "READY"
+
+
 def test_task_post_full_cycle_closes_to_ready(tmp_path: Path) -> None:
     """Task bridge: RED→GREEN→CLEAN→REFACTOR via PostToolUse Tasks closes the cycle."""
     workspace = _setup_workspace(tmp_path)
@@ -2337,9 +2553,7 @@ def test_task_post_full_cycle_closes_to_ready(tmp_path: Path) -> None:
     _run_gate(workspace, _task("tdd-red-ornith"))
     _run_gate(workspace, _task_post("tdd-red-ornith"))  # → CODING
     _run_gate(workspace, _task("tdd-green-ornith"))
-    _run_gate(
-        workspace, _task_post("tdd-green-ornith", tool_response="VERDE: test passes")
-    )  # → CLEAN (DW-111: requires VERDE)
+    _run_gate(workspace, _task_post("tdd-green-ornith"))  # → CLEAN
     _run_gate(workspace, _task("tdd-clean-ornith"))
     _run_gate(workspace, _task_post("tdd-clean-ornith"))  # → REFACTOR
     _run_gate(workspace, _task("tdd-refactor-ornith"))
@@ -2354,72 +2568,23 @@ def test_task_post_full_cycle_closes_to_ready(tmp_path: Path) -> None:
         assert skill in state["skill_seen"]
 
 
-def test_task_post_green_without_verde_stays_at_green_seen(tmp_path: Path) -> None:
-    """DW-111 fix: GREEN Task without VERDE must NOT advance to CLEAN.
-
-    Previously the bridge did CODING→GREEN_SEEN→CLEAN unconditionally, forcing
-    a reset hatch even when GREEN STOPped (no VERDE). Now it stays at GREEN_SEEN
-    so the coordinator can re-dispatch GREEN without reset.
-    """
+def test_task_post_green_without_verde_does_not_advance_to_clean(tmp_path: Path) -> None:
+    """GREEN completion without valid evidence cannot advance the cycle."""
     workspace = _setup_workspace(tmp_path)
     _run_gate(workspace, _skill("bmad-tdd-coordinator"))
     _run_gate(workspace, _task("tdd-red-ornith"))
-    _run_gate(workspace, _task_post("tdd-red-ornith"))  # READY→CODING
-    _run_gate(workspace, _task("tdd-green-ornith"))  # CODING, pre GREEN
+    _run_gate(workspace, _task_post("tdd-red-ornith"))
+    _run_gate(workspace, _task("tdd-green-ornith"))
 
-    # GREEN Task completes WITHOUT VERDE (STOP case): should stay at GREEN_SEEN
-    rc, _, _ = _run_gate(workspace, _task_post("tdd-green-ornith"))
-    assert rc == 0
+    rc, _, stderr = _run_gate(
+        workspace,
+        _task_post("tdd-green-ornith", tool_response="STOP: quality gate failed"),
+    )
+    assert rc == 2
+    assert "evidencia" in stderr.lower()
     state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
-    assert state["phase"] == "GREEN_SEEN", (
-        "DW-111: GREEN without VERDE must stay GREEN_SEEN, not CLEAN"
-    )
-    assert "tdd-green" in state["skill_seen"]
-
-    # GREEN without VERDE but with explicit STOP text also stays GREEN_SEEN
-    rc, _, _ = _run_gate(
-        workspace, _task_post("tdd-green-ornith", tool_response="STOP: quality gate failed")
-    )
-    assert rc == 0
-    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
-    assert state["phase"] == "GREEN_SEEN"
-
-
-def test_task_post_green_with_verde_advances_to_clean(tmp_path: Path) -> None:
-    """GREEN Task with VERDE in tool_response must advance to CLEAN (happy path)."""
-    # Fresh workspace, CODING→GREEN_SEEN→CLEAN with VERDE string
-    workspace2 = _setup_workspace(tmp_path / "v2")
-    _run_gate(workspace2, _skill("bmad-tdd-coordinator"), story_key="1-6-repair-test-v2")
-    _run_gate(workspace2, _task("tdd-red-ornith"), story_key="1-6-repair-test-v2")
-    _run_gate(workspace2, _task_post("tdd-red-ornith"), story_key="1-6-repair-test-v2")
-    _run_gate(workspace2, _task("tdd-green-ornith"), story_key="1-6-repair-test-v2")
-    rc, _, _ = _run_gate(
-        workspace2,
-        _task_post("tdd-green-ornith", tool_response="VERDE: test passes"),
-        story_key="1-6-repair-test-v2",
-    )
-    assert rc == 0
-    state = json.loads(
-        (workspace2 / ".bmad-harness" / "tdd-state-1-6-repair-test-v2.json").read_text()
-    )
-    assert state["phase"] == "CLEAN"
-
-    # Also test dict-shaped tool_response with VERDE
-    workspace3 = _setup_workspace(tmp_path / "v3")
-    _run_gate(workspace3, _skill("bmad-tdd-coordinator"), story_key="1-6-repair-test-v3")
-    _run_gate(workspace3, _task("tdd-red-ornith"), story_key="1-6-repair-test-v3")
-    _run_gate(workspace3, _task_post("tdd-red-ornith"), story_key="1-6-repair-test-v3")
-    _run_gate(workspace3, _task("tdd-green-ornith"), story_key="1-6-repair-test-v3")
-    rc, _, _ = _run_gate(
-        workspace3,
-        _task_post("tdd-green-ornith", tool_response={"output": "VERDE: via dict"}),
-        story_key="1-6-repair-test-v3",
-    )
-    assert rc == 0
-    state = json.loads(
-        (workspace3 / ".bmad-harness" / "tdd-state-1-6-repair-test-v3.json").read_text()
-    )
-    assert state["phase"] == "CLEAN"
+    assert state["phase"] == "CODING"
+    assert state["pending_task"] == "tdd-green-ornith"
 
 
 def test_task_post_non_tdd_task_ignored(tmp_path: Path) -> None:

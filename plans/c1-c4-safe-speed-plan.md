@@ -1,12 +1,12 @@
 # C1 + C4 Safe-Speed Cross-Repository Implementation Plan
 
-**Status:** REVIEWED - no unresolved critical/high findings; human implementation go required  
-**Date:** 2026-08-26  
-**Decision owner:** Human project owner  
-**Operational reference:** `/mnt/bunker_data/rompehielos`  
-**Portable module:** `/mnt/bunker_data/bmad-gherkin-tdd`  
-**Research source:** `_bmad-output/planning-artifacts/research/technical-tdd-en-la-era-del-desarrollo-autonomo-gu-2026-08-25/research.md`  
-**Curated recommendations:** `_bmad-output/planning-artifacts/research/technical-tdd-en-la-era-del-desarrollo-autonomo-gu-2026-08-25/curas-bmad-gherkin-tdd.md`  
+**Status:** REVIEWED - no unresolved critical/high findings; human implementation go required
+**Date:** 2026-08-26
+**Decision owner:** Human project owner
+**Operational reference:** `/mnt/bunker_data/rompehielos`
+**Portable module:** `/mnt/bunker_data/bmad-gherkin-tdd`
+**Research source:** `_bmad-output/planning-artifacts/research/technical-tdd-en-la-era-del-desarrollo-autonomo-gu-2026-08-25/research.md`
+**Curated recommendations:** `_bmad-output/planning-artifacts/research/technical-tdd-en-la-era-del-desarrollo-autonomo-gu-2026-08-25/curas-bmad-gherkin-tdd.md`
 **Prerequisite plan:** `plans/p1-full-mutation-to-release.md`
 
 ## 1. Purpose

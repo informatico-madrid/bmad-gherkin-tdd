@@ -152,6 +152,15 @@ La directiva canónica de dispatch es `invoke task: <agent>` — la secuencia pr
 es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
 `invoke task: tdd-clean-ornith` → `invoke task: tdd-refactor-ornith`.
 
+**CONTRATO DE COMPLETACIÓN DEL TASK:** el coordinador solo puede avanzar después de
+que el `Task` termine con éxito y su respuesta contenga exactamente una línea única
+`BMAD_TDD_PHASE_RESULT: <JSON>`. El JSON debe incluir el `agent` esperado, la fase
+(`RED`, `GREEN`, `CLEAN` o `REFACTOR`), `status: "PASS"`, `test_exit` coherente
+(RED distinto de cero; las demás fases igual a cero) y el token de bitácora esperado
+(`ROJO`, `VERDE`, `CLEAN` o `REFACTOR`). Si falta, es ambiguo o contradice la fase,
+HALT y reportar la evidencia inválida; nunca inferir completación por el nombre del
+subagente ni avanzar por un `Task` vacío.
+
   - If classification = development:
       ```
       task(
@@ -161,7 +170,8 @@ es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
       )
       ```
       El subagente tdd-red-ornith tiene su propio contexto y puede escribir archivos de test.
-      Esperar a que complete (test escrito + pytest FAIL confirmado).
+       Esperar a que complete (test escrito + `{workflow.test_cmd}` FAIL confirmado +
+       `BMAD_TDD_PHASE_RESULT` válido).
 
       **C4 ADVISOR — RED TEST ANALYSIS (coordinador, obligatorio, no bloqueante):**
           Con los paths/nodeids EXACTOS del RED handoff contract, ejecutar ANTES del
@@ -226,7 +236,8 @@ es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
       )
       ```
       El subagente tdd-green-ornith implementa código mínimo para hacer PASS el test.
-      Esperar a que complete (pytest PASS confirmado).
+       Esperar a que complete (`{workflow.test_cmd}` PASS confirmado +
+       `BMAD_TDD_PHASE_RESULT` válido).
 
       ```
       task(
@@ -235,8 +246,10 @@ es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
         prompt="[contexto: test pasando + código actual + instrucciones de limpieza estructural]"
       )
       ```
-      El subagente tdd-clean-ornith ejecuta el cleaner-gate estructural + cobertura.
-      Esperar a que complete (cleaner PASS + coverage).
+      El subagente tdd-clean-ornith ejecuta los gates estructural y de cobertura
+      aplicables; los no aplicables se registran N/A sin ejecutar comandos.
+       Esperar a que complete (gates aplicables PASS + N/A auditables + tests PASS +
+       `BMAD_TDD_PHASE_RESULT` válido).
 
       ```
       task(
@@ -246,8 +259,9 @@ es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
       )
       ```
       El subagente tdd-refactor-ornith limpia el código manteniendo pytest PASS.
-      Esperar a que complete (pytest PASS confirmado). La mutación completa NO es de
-      esta fase — el coordinador la corre UNA vez en RELEASE.
+      Esperar a que complete (tests PASS + `BMAD_TDD_PHASE_RESULT` válido).
+      La mutación completa NO es de esta fase — el coordinador la corre UNA vez en
+      RELEASE; si `mutation_applicable = false`, registra la razón N/A central.
 
   - If classification = verification_preexisting:
       ```
@@ -286,15 +300,22 @@ RELEASE (gates de salida — ejecutar DESPUÉS del último @s; el coordinator es
   RELEASE SCOPE (determinar ANTES de ejecutar cualquier gate):
     - Los gates aplicables se declaran en la configuración del proyecto
       (`_bmad/custom/bmad-tdd-coordinator.toml` o el fichero de configuración del módulo).
+    - `*_applicable` y `*_na_reason` son propiedad exclusiva de esta configuración central;
+      las personalizaciones de las fases solo declaran comandos. Todo `false` exige una
+      razón N/A no vacía y auditable.
     - Los gates N/A se registran como "N/A — skipped" y se omiten.
     - NUNCA escalar por un gate determinado N/A. Escalar solo por gates aplicables que fallan.
 
   Gates (los comandos exactos salen de la configuración del proyecto; los siguientes son
   los que el módulo define por defecto — un proyecto los sobreescribe en su override layer):
-  - Mutation Gate: `{workflow.mutation_cmd}` (default `make mutation-check`) — SOLO coordinador,
-    NUNCA delegar el veredicto a subagentes. MSI >= {workflow.msi_minimum} (default 85). Los mutantes
-    sobrevivientes deben estar documentados en el mutant-register. PROHIBIDO añadir
-    `# pragma: no mutate` — usar registro de mutantes.
+  - Mutation Gate: si `{workflow.mutation_applicable} = true`, ejecutar
+    `{workflow.mutation_cmd}` (default `make mutation-check`) — SOLO coordinador,
+    NUNCA delegar el veredicto. MSI >= {workflow.msi_minimum} (default 85) y
+    sobrevivientes documentados. Si es `false`, registrar `N/A — skipped` sin
+    ejecutar el comando ni fabricar MSI.
+   - Cleaner/Coverage: aplicar respectivamente los flags centrales
+     `{workflow.cleaner_applicable}` y `{workflow.coverage_applicable}`; un valor `false`
+     exige N/A explícito con su `*_na_reason`.
   - Test Gate: `{workflow.test_cmd}` (default `uv run pytest`) — toda la suite pasa.
   - Release gates adicionales del proyecto (anti-fixture, puerto real, sonda de capacidad)
     se ejecutan si están declarados en el override layer del proyecto.
@@ -362,17 +383,20 @@ Por @s:
     el coordinador DEBE validar el output del tdd-clean con los 10 checks abajo.
     Si algún check FAIL → el coordinador decide: reintentar CLEAN (max 1 vez) o
     registrar gap en deferred-work (complejidad conocida, no cascarón).
-3. REFACTOR Gate: pytest debe pasar. Full mutation is NOT part of REFACTOR; do not
-   close a scenario on targeted `uv run mutmut run '<id>'` evidence alone.
+3. REFACTOR Gate: `{workflow.test_cmd}` debe pasar. Full mutation is NOT part of REFACTOR;
+   do not close a scenario on targeted `uv run mutmut run '<id>'` evidence alone. La
+   mutación completa se evalúa en RELEASE según `mutation_applicable`.
 4. Verification Preexisting Gate: ALL 5 conditions must hold to skip RED; MSI verified via
    el comando de mutación del proyecto o el fichero de stats, NEVER from bitácora alone
 
 CLEAN Gate — validaciones del coordinador (NO delegar al modelo):
 
 ESTRUCTURALES (qué dicen las herramientas):
-  C1. `cleaner-gate` PASS en los checks (KISS, DRY, YAGNI, LoD, CoI, coverage, scan_sites)
-  C2. Coverage = 100% en archivos del diff
-  C3. `pytest` verde tras los cambios del CLEAN
+   C1. Si el flag central `cleaner_applicable = true`, cleaner-gate PASS; si es `false`,
+       N/A con `cleaner_na_reason`.
+   C2. Si el flag central `coverage_applicable = true`, coverage = 100%; si es `false`,
+       N/A con `coverage_na_reason`.
+  C3. `{workflow.test_cmd}` verde tras los cambios del CLEAN.
 
 SEMÁNTICAS (anti-cascarón):
   C4. Cambios solo estructurales, no de comportamiento (verificar diff)
@@ -395,12 +419,13 @@ Decisión del coordinador:
     (es mejor complejidad conocida y documentada que cascarón con 100% MSI falso)
 
 RELEASE (todos deben pasar para que el flujo exterior cierre la story):
-4. Mutation Gate: `{workflow.mutation_cmd}` (SOLO coordinador, UNA vez tras el último @s —
-   NUNCA delegar a subagentes). MSI >= {workflow.msi_minimum} (configurable, default 85) con
-   100% coverage. Los mutantes sobrevivientes deben estar documentados en mutant-register.md.
-   Inspección de mutantes conocidos: `mutmut show <name>` / `mutmut run '<name>'`
-   (coordinador-owned, dirigida). No certificar con `mutmut results`.
-   PROHIBIDO añadir `# pragma: no mutate` — usar registro de mutantes en su lugar.
+4. Mutation Gate: cuando `{workflow.mutation_applicable} = true`, ejecutar
+   `{workflow.mutation_cmd}` SOLO por el coordinador, UNA vez tras el último @s —
+   NUNCA delegar a subagentes. Exigir MSI >= {workflow.msi_minimum} (configurable,
+   default 85) con 100% coverage y documentar sobrevivientes en mutant-register.md.
+   La inspección dirigida usa `mutmut show <name>` / `mutmut run '<name>'`; no
+   certificar con `mutmut results`. Cuando es `false`, registrar N/A sin ejecutar
+   ni fabricar métricas. PROHIBIDO añadir `# pragma: no mutate`.
 5. Test Gate: `{workflow.test_cmd}` pasa (toda la suite).
 6. Gates adicionales del proyecto (declarados en el override layer) — solo los aplicables.
 7. Un AC de ejecución en vivo cerrado con SKIPPED/XFAIL es ROJO — la story se marca blocked.
@@ -420,7 +445,7 @@ RELEASE (todos deben pasar para que el flujo exterior cierre la story):
 - NUNCA skip phases in development scenarios (RED->GREEN->CLEAN->REFACTOR is mandatory)
   - Exception: verification_preexisting classification permits skipping RED only when ALL 5
     CLASSIFY conditions are satisfied AND evidence is documented in bitácora
-  - CLEAN nunca se salta — es el gate estructural antes de mutation
+  - CLEAN nunca se salta: ejecuta gates aplicables, registra los N/A y verifica tests
   - ambiguous classification requires STOP — never invent RED, never skip phases
   - A RED that PASSES instead of failing is a protocol violation → STOP, no inventes un
     RED ni sigas; el gate mecánico lo bloquea con RED_VIOLATION.
@@ -434,7 +459,8 @@ RELEASE (todos deben pasar para que el flujo exterior cierre la story):
 
 - Si un test no falla en RED: STOP y reportar al usuario
 - Si un test no pasa en GREEN: STOP y reportar al usuario
-- Si mutmut falla en RELEASE: STOP y reportar al usuario con lista de survived mutants
+- Si el comando de mutación aplicable falla en RELEASE: STOP y reportar al usuario con
+  la lista de survived mutants.
 
 ## Output
 

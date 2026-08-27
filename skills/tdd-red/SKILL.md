@@ -51,7 +51,8 @@ description: TDD RED Phase write failing test with PERSISTENT_PROMPT_CONSTRAINTS
 
 ## Verification
 
-- **Corre:** `{workflow.test_cmd} <test_file> -x` → debe mostrar FAIL (no PASS, no skip/xfail)
+- **Corre exactamente:** `{workflow.test_cmd}` → debe terminar con FAIL (no PASS, no skip/xfail).
+  El proyecto incluye cualquier selección de archivo o flags dentro de `test_cmd`.
 - **Delega a:** `tdd-green` (para PASS), `tdd-refactor` (para refactor)
 
 ## Constraints
@@ -67,6 +68,8 @@ description: TDD RED Phase write failing test with PERSISTENT_PROMPT_CONSTRAINTS
 - Test file actualizado con nuevo test fallido
 - Bitacora TDD actualizada (ROJO status)
 - Confirmacion de que test FAIL
+- Antes de devolver el control, emitir exactamente una línea de evidencia para el
+  coordinador: `BMAD_TDD_PHASE_RESULT: {"agent":"tdd-red-ornith","phase":"RED","status":"PASS","test_exit":<nonzero>,"bitacora":"ROJO"}`.
 
 ## RED Handoff Contract (C4 advisory)
 
@@ -84,6 +87,6 @@ exactos que escribiste y el comando real.
 
 ## Error Handling
 
-- Si pytest no muestra FAIL: STOP y reportar
+- Si el comando de test no termina con FAIL: STOP y reportar
 - Si hay error de sintaxis: Corregir y reintentar
 - Si test pasa accidentalmente: STOP y reportar (no es RED valido)

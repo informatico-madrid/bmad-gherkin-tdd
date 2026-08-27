@@ -179,11 +179,63 @@ paths, mission files and product rules:
 | `bmad-tdd-coordinator` | `mutation_cmd` | `make mutation-check` |
 | `bmad-tdd-coordinator` | `msi_minimum` | `85` |
 | `bmad-tdd-coordinator` | `verification_preexisting_threshold` | `100` |
+| `bmad-tdd-coordinator` | `prod_prefix` / `test_prefix` | `src/` / `tests/` |
+| `bmad-tdd-coordinator` | `cleaner_applicable` / `coverage_applicable` / `mutation_applicable` + `*_na_reason` | `true` / empty |
 | `tdd-clean` | `cleaner_cmd` | `uv run python _bmad/gherkin-tdd/scripts/cleaner_gate.py` |
+| `tdd-clean` | `coverage_cmd` | `uv run pytest --cov --cov-report=term-missing` |
 | `tdd-red` / `tdd-green` / `tdd-refactor` | `test_cmd` | `uv run pytest` |
 | `bmad-loop-coordinator` | `run_cmd` | `bmad-loop run --story <story-key>` |
 | `bmad-loop-coordinator` | `human_present_path` | `{project-root}/.bmad-loop/human-present` |
 | `bmad-loop-coordinator` | `obs_log_limit` | `30` |
+
+The mechanical hook reads `test_cmd`, `prod_prefix`, and `test_prefix` from the
+coordinator's project customization. Environment variables
+`BMAD_TDD_VERIFY_CMD`, `BMAD_TDD_PROD_PREFIX`, and `BMAD_TDD_TEST_PREFIX` take
+precedence. OpenCode supplies the Bash exit code to the hook, so configured test
+runners do not need pytest-shaped output.
+
+Polyglot projects mirror the exact test command into each phase customization, but
+gate applicability is declared only in the coordinator customization. This prevents
+the coordinator and a phase skill from disagreeing about whether a release gate ran.
+For a TypeScript project without cleaner, coverage, or mutation tooling, keep all
+four phases but record those three gates as auditable N/A values:
+
+```toml
+# _bmad/custom/bmad-tdd-coordinator.toml
+[workflow]
+test_cmd = "npm run verify"
+prod_prefix = "app/"
+test_prefix = "tests/"
+cleaner_applicable = false
+coverage_applicable = false
+mutation_applicable = false
+cleaner_na_reason = "No cleaner is available for this stack"
+coverage_na_reason = "Coverage tooling is not configured for this stack"
+mutation_na_reason = "Mutation tooling is not configured for this stack"
+```
+
+```toml
+# _bmad/custom/tdd-red.toml and tdd-green.toml
+[workflow]
+test_cmd = "npm run verify"
+```
+
+```toml
+# _bmad/custom/tdd-clean.toml
+[workflow]
+test_cmd = "npm run verify"
+```
+
+```toml
+# _bmad/custom/tdd-refactor.toml
+[workflow]
+test_cmd = "npm run verify"
+```
+
+An N/A gate never skips CLEAN or REFACTOR: the subagent still runs, records the
+central reason, verifies the signed behavior, and closes its bitácora phase. In loop
+mode, a false applicability flag without its non-empty `*_na_reason` is rejected
+before the gate state is loaded.
 
 ## Layout
 
@@ -235,6 +287,12 @@ with or endorsed by SwarmForge.
 - **A test passes during RED** — that is a protocol violation. The gate blocks further
   tools (`RED_VIOLATION`); recover with `python3 hooks/tdd_cycle_gate.py reset` and
   re-classify the scenario (it may be `verification_preexisting`).
+- **A non-pytest command does not advance RED/GREEN** — set `workflow.test_cmd` in
+  `_bmad/custom/bmad-tdd-coordinator.toml` or `BMAD_TDD_VERIFY_CMD`. Under OpenCode,
+  ensure the installed plugin is current so it forwards `metadata.exit`.
+- **A phase Task does not advance the loop** — its response must contain one valid
+  `BMAD_TDD_PHASE_RESULT` line matching the expected agent, phase, test exit and
+  bitácora token; the coordinator never advances from the agent name alone.
 - **`make mutation-check` (or a bare `uv run mutmut run`) is denied mid-story in
   loop mode** — that is the intent: full-scope mutation is coordinator-owned at
   RELEASE. Close the current `@s` cycle (REFACTOR → READY) or run it once at RELEASE.

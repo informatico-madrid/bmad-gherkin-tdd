@@ -111,6 +111,115 @@ def test_absolute_gate_path_is_not_joined_to_project(tmp_path: Path) -> None:
     }
 
 
+def test_bash_post_hook_forwards_exit_metadata(tmp_path: Path) -> None:
+    gate = tmp_path / "capture-gate.py"
+    observed = tmp_path / "gate-observed.json"
+    gate.write_text(
+        "import json, pathlib, sys\n"
+        "pathlib.Path('gate-observed.json').write_text(json.dumps(json.load(sys.stdin)))\n",
+        encoding="utf-8",
+    )
+    script = f"""
+      import {{ TddCycleGate }} from {json.dumps(PLUGIN.as_uri())};
+      process.env.BMAD_TDD_GATE_PATH = {json.dumps(str(gate))};
+      const hooks = await TddCycleGate({{ directory: {json.dumps(str(tmp_path))} }});
+      await hooks["tool.execute.after"](
+        {{ tool: "bash", args: {{ command: "npm run verify" }} }},
+        {{
+          title: "npm run verify",
+          output: "# pass 4\\n# fail 0",
+          metadata: {{ exit: 0, truncated: false }},
+        }},
+      );
+    """
+
+    subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    payload = json.loads(observed.read_text(encoding="utf-8"))
+    assert payload["tool_response"] == {
+        "title": "npm run verify",
+        "output": "# pass 4\n# fail 0",
+        "metadata": {"exit": 0, "truncated": False},
+    }
+
+
+def test_task_post_hook_forwards_phase_evidence(tmp_path: Path) -> None:
+    gate = tmp_path / "capture-gate.py"
+    observed = tmp_path / "gate-observed.json"
+    gate.write_text(
+        "import json, pathlib, sys\n"
+        "pathlib.Path('gate-observed.json').write_text(json.dumps(json.load(sys.stdin)))\n",
+        encoding="utf-8",
+    )
+    marker = (
+        "BMAD_TDD_PHASE_RESULT: "
+        '{"agent":"tdd-red-ornith","phase":"RED","status":"PASS",'
+        '"test_exit":1,"bitacora":"ROJO"}'
+    )
+    script = f"""
+      import {{ TddCycleGate }} from {json.dumps(PLUGIN.as_uri())};
+      process.env.BMAD_TDD_GATE_PATH = {json.dumps(str(gate))};
+      const hooks = await TddCycleGate({{ directory: {json.dumps(str(tmp_path))} }});
+      await hooks["tool.execute.after"](
+        {{ tool: "task", args: {{ subagent_type: "tdd-red-ornith" }} }},
+        {{ title: "RED", output: {json.dumps(marker)}, metadata: {{ exit: 0 }} }},
+      );
+    """
+
+    subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    payload = json.loads(observed.read_text(encoding="utf-8"))
+    assert payload["tool_name"] == "Task"
+    assert payload["tool_input"] == {"subagent_type": "tdd-red-ornith", "prompt": ""}
+    assert payload["tool_response"]["output"] == marker
+
+
+def test_task_hook_forwards_session_id(tmp_path: Path) -> None:
+    gate = tmp_path / "capture-gate.py"
+    observed = tmp_path / "gate-observed.json"
+    gate.write_text(
+        "import json, pathlib, sys\n"
+        "pathlib.Path('gate-observed.json').write_text(json.dumps(json.load(sys.stdin)))\n",
+        encoding="utf-8",
+    )
+    script = f"""
+      import {{ TddCycleGate }} from {json.dumps(PLUGIN.as_uri())};
+      process.env.BMAD_TDD_GATE_PATH = {json.dumps(str(gate))};
+      const hooks = await TddCycleGate({{ directory: {json.dumps(str(tmp_path))} }});
+      await hooks["tool.execute.after"](
+        {{
+          tool: "task",
+          sessionID: "ses_parent",
+          args: {{ subagent_type: "tdd-red-ornith" }},
+        }},
+        {{ title: "RED", output: "result", metadata: {{ exit: 0 }} }},
+      );
+    """
+
+    subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    payload = json.loads(observed.read_text(encoding="utf-8"))
+    assert payload["session_id"] == "ses_parent"
+
+
 def test_unattended_question_gate_denied_in_loop_without_human(tmp_path: Path) -> None:
     """Mechanical question gate: in BMAD_LOOP_MODE without human-present=yes,
     `question` is denied (prose is not enough for the module's own standard)."""

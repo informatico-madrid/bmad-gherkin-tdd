@@ -1,9 +1,15 @@
 ---
 name: tdd-refactor
-description: TDD REFACTOR Phase clean up code with MUTANT_KILLING_GUIDE. Use when implementing TDD REFACTOR phase.
+description: TDD REFACTOR Phase preserves behavior and confirms tests; full mutation is owned by the coordinator at RELEASE. Use when implementing TDD REFACTOR phase.
 ---
 
 # TDD REFACTOR Phase
+
+Mutation applicability is owned centrally by the coordinator customization in
+`{project-root}/_bmad/custom/bmad-tdd-coordinator.toml`. This phase customization
+supplies commands only; do not add a contradictory phase-local `mutation_applicable`
+flag. The coordinator records the central `mutation_na_reason` as RELEASE N/A when
+mutation is disabled.
 
 ## Activation Sequence
 
@@ -38,7 +44,8 @@ description: TDD REFACTOR Phase clean up code with MUTANT_KILLING_GUIDE. Use whe
 2. Review current implementation (GREEN + CLEAN phases)
 3. Refactor structure while preserving behavior
 4. Run `{workflow.test_cmd}` -> confirm PASS
-5. Actualizar bitácora TDD (REFACTOR status). No certificar MSI aquí.
+5. Actualizar bitácora TDD (REFACTOR status). No certificar MSI aquí; si la
+   mutación no aplica, la razón N/A la registra el coordinador en RELEASE.
 6. STOP -- return to coordinator. Full mutation is coordinator-owned at RELEASE.
 
 ## Does Not Own
@@ -54,8 +61,9 @@ description: TDD REFACTOR Phase clean up code with MUTANT_KILLING_GUIDE. Use whe
 
 ## Verification
 
-- **Corre:** `{workflow.test_cmd} <test_file> -x` → debe seguir mostrando PASS tras el refactor
-- **Delega a:** el coordinador en RELEASE (mutación completa, MSI)
+- **Corre:** `{workflow.test_cmd}` → debe seguir mostrando PASS tras el refactor.
+- **Delega a:** el coordinador en RELEASE (mutación completa, MSI o N/A según el
+  scope central).
 
 ## Constraints
 
@@ -72,10 +80,13 @@ description: TDD REFACTOR Phase clean up code with MUTANT_KILLING_GUIDE. Use whe
 
 - Codigo refactorizado (mejor diseno)
 - Bitacora TDD actualizada (REFACTOR status)
+- No certificar MSI en esta fase; el coordinador registra MSI o N/A en RELEASE
 - Confirmacion de que test PASS
+- Antes de devolver el control, emitir exactamente una línea de evidencia para el
+  coordinador: `BMAD_TDD_PHASE_RESULT: {"agent":"tdd-refactor-ornith","phase":"REFACTOR","status":"PASS","test_exit":0,"bitacora":"REFACTOR"}`.
 
 ## Error Handling
 
-- Si pytest muestra FAIL despues de refactor: Revertir cambio
+- Si el comando de test muestra FAIL despues de refactor: Revertir cambio
 - Si hay error de sintaxis: Corregir y reintentar
 - Si test pasa pero hay warnings: Continuar

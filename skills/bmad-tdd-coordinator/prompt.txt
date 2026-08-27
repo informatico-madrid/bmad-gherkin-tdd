@@ -30,6 +30,12 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
    es: `invoke task: tdd-red-ornith` → `invoke task: tdd-green-ornith` →
    `invoke task: tdd-clean-ornith` → `invoke task: tdd-refactor-ornith`.
 
+   Cada Task debe terminar con éxito y devolver exactamente una línea única de evidencia:
+   `BMAD_TDD_PHASE_RESULT: <JSON>`, con `agent`, fase (`RED`/`GREEN`/`CLEAN`/`REFACTOR`),
+   `status: "PASS"`, `test_exit` (RED distinto de cero; las demás fases cero) y el token
+   de bitácora (`ROJO`/`VERDE`/`CLEAN`/`REFACTOR`). Si falta o contradice la fase, HALT;
+   no avances por el nombre del subagente ni por un Task vacío.
+
       ```
       task(
         subagent_type="tdd-red-ornith",
@@ -39,24 +45,24 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
       ```
        → escribir test fallido desde el escenario del contrato
 
-      ADVISOR C4 (obligatorio, no bloqueante, ANTES del review): con los nodeids
-      EXACTOS del RED handoff contract correr UN comando:
-        python _bmad/gherkin-tdd/scripts/red_test_advisor.py analyze \
-          --project-root . --evidence-root <run-dir>/evidence/red-test-advisor \
-          --scenario-id @s<k> --target <nodeid> \
-          --output <run-dir>/evidence/red-test-advisor/advisor-<story>-s<k>.json
-      Veredicto shape-only: calibración; NUNCA sustituye ni condiciona el review.
-      Infra fallo → registrar y seguir (retry máx 1).
+       ADVISOR C4 (obligatorio, no bloqueante, ANTES del review): con los nodeids
+       EXACTOS del RED handoff contract correr UN comando:
+         python _bmad/gherkin-tdd/scripts/red_test_advisor.py analyze \
+           --project-root . --evidence-root <run-dir>/evidence/red-test-advisor \
+           --scenario-id @s<k> --target <nodeid> \
+           --output <run-dir>/evidence/red-test-advisor/advisor-<story>-s<k>.json
+       Veredicto shape-only: calibración; NUNCA sustituye ni condiciona el review.
+       Infra fallo → registrar y seguir (retry máx 1).
 
-      Tras el MUTANT-HUNTING REVIEW (SIEMPRE, regardless of the advisor verdict),
-      persistir el texto bounded del review + su label y correr:
-        python _bmad/gherkin-tdd/scripts/red_test_advisor.py compare \
-          --advisor <advisor.json> --llm-verdict <strong|weak|unsupported> \
-          --llm-review <review.txt> --evidence-root <run-dir>/evidence/red-test-advisor \
-          --output <comparison.json>
-      Calibración only: el advisor verdict never authorizes GREEN — decide SOLO
-      el review LLM; registrar paths/hashes en bitácora; NUNCA `certified`.
-
+       Tras el MUTANT-HUNTING REVIEW (SIEMPRE, regardless of the advisor verdict),
+       persistir el texto bounded del review + su label y correr:
+         python _bmad/gherkin-tdd/scripts/red_test_advisor.py compare \
+           --advisor <advisor.json> --llm-verdict <strong|weak|unsupported> \
+           --llm-review <review.txt> --evidence-root <run-dir>/evidence/red-test-advisor \
+           --output <comparison.json>
+       Calibración only: el advisor verdict never authorizes GREEN — decide SOLO
+       el review LLM; registrar paths/hashes en bitácora; NUNCA `certified`.
+       → devolver exactamente un `BMAD_TDD_PHASE_RESULT` válido después del review.
 
       ```
       task(
@@ -65,8 +71,8 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
         prompt="[contexto: test RED escrito + scenario @s<k> + instrucciones]"
       )
       ```
-      → hacer test pasar (si classification=verification_preexisting, el prompt DEBE contener
-        el marker exacto `classification=verification_preexisting` + evidencia)
+       → hacer test pasar (si classification=verification_preexisting, el prompt DEBE contener
+         el marker exacto `classification=verification_preexisting` + evidencia)
 
       ```
       task(
@@ -75,7 +81,8 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
         prompt="[contexto: test pasando + código actual + instrucciones de limpieza estructural]"
       )
       ```
-      → gate estructural (cleaner-gate + coverage) antes de mutación
+       → gates CLEAN aplicables + N/A explícitos + tests verdes antes de REFACTOR;
+         devolver `BMAD_TDD_PHASE_RESULT` válido
 
       ```
       task(
@@ -84,9 +91,12 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
         prompt="[contexto: test pasando + código actual + instrucciones de limpieza]"
       )
       ```
-      → limpiar código (refactor estructural; pytest PASS) — la mutación completa es del coordinador en RELEASE
-4. **RELEASE** (gates de salida): mutation + test + gates adicionales del proyecto
-   (los comandos exactos salen del override layer del proyecto).
+       → limpiar código (refactor estructural; `{workflow.test_cmd}` PASS) — la mutación completa es del coordinador en RELEASE
+       → devolver `BMAD_TDD_PHASE_RESULT` válido.
+  4. **RELEASE** (gates de salida): mutation, test y gates adicionales del proyecto;
+     cleaner/coverage se ejecutan cuando sus flags `*_applicable` son true. Los
+     comandos exactos salen del override layer del proyecto y la mutación completa
+     la ejecuta una sola vez el coordinador.
    El coordinator es implementation-only: NO marca `status: done`, NO escribe
    `## Auto Run Result`, NO crea el completion marker `bmad-dev-auto-result-*`
    y NO edita sprint-status.yaml (el engine es single-writer). El cierre lo hace
@@ -111,6 +121,9 @@ Eres el coordinador TDD de BMAD. Orquestas RED, GREEN, CLEAN y REFACTOR para cad
 - BITÁCORA OBLIGATORIA en cada @s
 - PROHIBIDO `# pragma: no mutate` — documentar sobrevivientes en mutant-register
 - Cada phase skill tiene su propia activación BMAD (no pierdes contexto)
+- El scope de aplicabilidad (`*_applicable`) y sus razones `*_na_reason` viven solo en
+  `_bmad/custom/bmad-tdd-coordinator.toml`; las personalizaciones de fase no pueden
+  redefinirlos de forma contradictoria.
 
 ## Flujo
 
@@ -128,7 +141,9 @@ Para cada @s (desde el escenario del contrato firmado):
   5. task(subagent_type="tdd-refactor-ornith", ...)
 
 RELEASE:
-  1. Mutation Gate: {workflow.mutation_cmd} (SOLO coordinador, UNA vez tras el último @s) — MSI >= {workflow.msi_minimum}, coverage 100%
+   1. Mutation Gate: si {workflow.mutation_applicable}=true, ejecutar
+      {workflow.mutation_cmd} SOLO por el coordinador, UNA vez tras el último @s,
+      y exigir MSI >= {workflow.msi_minimum} con coverage 100%; si false, registrar N/A.
   2. Test Gate: {workflow.test_cmd} — toda la suite pasa
   3. Gates adicionales del proyecto (declarados en el override layer) — solo los aplicables
   4. NO edites sprint-status.yaml (single-writer: el engine) ni cierres el spec
@@ -144,5 +159,5 @@ RELEASE:
   - human_required (sin loop): HALT y pedir /gherkin-author (firma humana, nunca auto-aprobar).
 - Si un test no falla en RED: STOP y reportar (el gate mecánico lo marca RED_VIOLATION en loop)
 - Si un test no pasa en GREEN: STOP y reportar
-- Si mutmut falla en RELEASE: STOP y reportar survived mutants
+- Si el comando de mutación aplicable falla en RELEASE: STOP y reportar survived mutants
 - Si un gate determinado N/A por RELEASE SCOPE: registrar "N/A — skipped" y continuar. NUNCA escalar.

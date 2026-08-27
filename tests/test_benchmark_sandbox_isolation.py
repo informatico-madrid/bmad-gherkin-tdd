@@ -9,11 +9,7 @@ from agent_bench.refactor import launch as refactor_launch
 
 
 def _snapshot(base: Path) -> dict[Path, bytes]:
-    return {
-        path.relative_to(base): path.read_bytes()
-        for path in base.rglob("*")
-        if path.is_file()
-    }
+    return {path.relative_to(base): path.read_bytes() for path in base.rglob("*") if path.is_file()}
 
 
 def _fixture(tmp_path: Path) -> Path:
@@ -48,9 +44,7 @@ def test_red_cleans_only_the_sandbox(tmp_path: Path, monkeypatch):
 
     assert _snapshot(fixture) == before
     assert not (sandbox / "tests" / "unit" / "test_red_hard.py").exists()
-    assert "| @s | Fase | Status | Test file |" in (
-        sandbox / "bitacora.md"
-    ).read_text()
+    assert "| @s | Fase | Status | Test file |" in (sandbox / "bitacora.md").read_text()
     assert not list(sandbox.rglob("__pycache__"))
 
 
@@ -67,19 +61,13 @@ def test_green_cleans_only_the_sandbox(tmp_path: Path, monkeypatch):
     sandbox = green_launch._create_sandbox(run_dir, "test/model")
 
     assert _snapshot(fixture) == before
-    assert (
-        sandbox / "src" / "quota_broker.py"
-    ).read_text() == "canonical green stub\n"
-    assert "| @s | Fase | Status | Test file |" in (
-        sandbox / "bitacora.md"
-    ).read_text()
+    assert (sandbox / "src" / "quota_broker.py").read_text() == "canonical green stub\n"
+    assert "| @s | Fase | Status | Test file |" in (sandbox / "bitacora.md").read_text()
     assert not list(sandbox.rglob("__pycache__"))
 
 
 @pytest.mark.parametrize("module", (clean_launch, refactor_launch))
-def test_seed_is_restored_only_in_clean_and_refactor_sandboxes(
-    module, tmp_path: Path, monkeypatch
-):
+def test_seed_is_restored_only_in_clean_and_refactor_sandboxes(module, tmp_path: Path, monkeypatch):
     fixture = _fixture(tmp_path)
     seed = tmp_path / "seed.py"
     seed.write_text("canonical seed\n")

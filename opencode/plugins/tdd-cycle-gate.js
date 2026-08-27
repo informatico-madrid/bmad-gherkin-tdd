@@ -105,7 +105,7 @@ function enforceUnattendedQuestionGate(directory) {
   }
 }
 
-function runPythonGate(directory, event, mapped, toolResponse = null) {
+function runPythonGate(directory, event, mapped, toolResponse = null, sessionId = "") {
   // Gate path is configurable via BMAD_TDD_GATE_PATH (absolute or repo-relative).
   // Default: project-relative "hooks/tdd_cycle_gate.py".
   const configured = process.env.BMAD_TDD_GATE_PATH;
@@ -117,6 +117,7 @@ function runPythonGate(directory, event, mapped, toolResponse = null) {
     tool_name: mapped.toolName,
     tool_input: mapped.toolInput,
   };
+  if (typeof sessionId === "string" && sessionId) payload.session_id = sessionId;
   if (event === "PostToolUse") payload.tool_response = toolResponse;
   const result = spawnSync("python3", [gate], {
     cwd: directory,
@@ -145,12 +146,18 @@ const createTddCycleGate = async ({ directory }) => ({
       return;
     }
     const mapped = mapToolInput(input.tool, output.args);
-    if (mapped) runPythonGate(directory, "PreToolUse", mapped);
+    if (mapped) runPythonGate(directory, "PreToolUse", mapped, null, input.sessionID);
   },
 
   async "tool.execute.after"(input, output) {
     const mapped = mapToolInput(input.tool, input.args);
-    if (mapped) runPythonGate(directory, "PostToolUse", mapped, output.output);
+    if (mapped) {
+      runPythonGate(directory, "PostToolUse", mapped, {
+        title: output.title,
+        output: output.output,
+        metadata: output.metadata,
+      }, input.sessionID);
+    }
   },
 });
 

@@ -48,7 +48,8 @@ description: TDD GREEN Phase make test pass with standards.md. Use when implemen
 
 ## Verification
 
-- **Corre:** `{workflow.test_cmd} <test_file> -x` → debe mostrar PASS (el test ROJO de la fase anterior)
+- **Corre exactamente:** `{workflow.test_cmd}` → debe terminar con PASS para el test ROJO
+  de la fase anterior. El proyecto incluye cualquier selección o flags en `test_cmd`.
 - **Delega a:** `tdd-refactor` (para limpieza)
 
 ## Constraints
@@ -64,9 +65,11 @@ description: TDD GREEN Phase make test pass with standards.md. Use when implemen
 - Codigo implementado (minimo viable)
 - Bitacora TDD actualizada (VERDE status)
 - Confirmacion de que test PASS
+- Antes de devolver el control, emitir exactamente una línea de evidencia para el
+  coordinador: `BMAD_TDD_PHASE_RESULT: {"agent":"tdd-green-ornith","phase":"GREEN","status":"PASS","test_exit":0,"bitacora":"VERDE"}`.
 
 ## Error Handling
 
-- Si pytest muestra FAIL despues de implementar: Revisar implementacion
+- Si el comando de test termina con FAIL despues de implementar: Revisar implementacion
 - Si hay error de sintaxis: Corregir y reintentar
 - Si test pasa pero hay warnings: Continuar (no es GREEN valido si no pasa)

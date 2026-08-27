@@ -12,11 +12,11 @@ force *when* it is written).
 State machine (one open ``@s`` cycle at a time), persisted in the state dir
 (``BMAD_TDD_STATE_DIR``, default ``.bmad-harness/tdd-state.json``):
 
-    READY ──(pytest RED)──▶ RED_SEEN ──(story edit "ROJO:")──▶ CODING
+    READY ──(test FAIL)──▶ RED_SEEN ──(story edit "ROJO:")──▶ CODING
       ▲                                                           │
       │                                            (Edit src/** allowed)
       │                                                           ▼
-      │                                                (pytest GREEN)──▶ GREEN_SEEN
+      │                                                (test PASS)──▶ GREEN_SEEN
       │                                                                     │
       │                                                          (story edit "VERDE:") ▼
       └──(story edit "REFACTOR:")── REFACTOR ◀─(story edit "CLEAN:")── CLEAN ────────────┘
@@ -39,9 +39,12 @@ Enforced PreToolUse chokepoints (deny = exit 2, reason on stderr → fed back to
   • Edit/Write/MultiEdit creating a new test (``tests/**``) while GREEN_SEEN/CLEAN:
         → deny (close the current @s — log VERDE + CLEAN + REFACTOR — before the next test)
 
-Observed PostToolUse events (advance the machine, never block):
-  • Bash running pytest (not mutmut): RED in READY → RED_SEEN; GREEN in CODING → GREEN_SEEN.
-  • Bash reporting PASS in READY while tdd-red is pending (loop mode): READY → RED_VIOLATION.
+Observed PostToolUse events (advance the machine; invalid loop evidence is denied):
+  • Bash running pytest or the configured test command: FAIL in READY → RED_SEEN;
+    PASS in CODING → GREEN_SEEN.
+  • Task completion: a known phase agent advances only with a successful,
+    phase-specific ``BMAD_TDD_PHASE_RESULT`` marker and a matching pending Task.
+  • Bash test PASS in READY while tdd-red is pending (loop mode): READY → RED_VIOLATION.
   • Edit/Write to the story ``.md``: "ROJO:"@RED_SEEN→CODING, "VERDE:"@GREEN_SEEN→CLEAN,
     "CLEAN:"@CLEAN→REFACTOR, "REFACTOR:"@REFACTOR→READY (cycle closed).
 
@@ -82,6 +85,7 @@ import os
 import re
 import shlex
 import sys
+import tomllib
 import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager, suppress
@@ -90,9 +94,38 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 # ── Locations (relative to the repo root = the hook's cwd) ────────────────────
-# Parameterized via environment variables with generic defaults so the gate is
-# project-agnostic (bmad-gherkin-tdd module). A project may override any of these
-# in its own environment (e.g. a `.env` loaded by the harness or CI).
+
+
+def _load_project_workflow() -> dict[str, object]:
+    """Load gate-facing scalar overrides from the coordinator customization."""
+    workflow: dict[str, object] = {}
+    for path in (
+        Path("_bmad/custom/bmad-tdd-coordinator.toml"),
+        Path("_bmad/custom/bmad-tdd-coordinator.user.toml"),
+    ):
+        try:
+            with path.open("rb") as handle:
+                data = tomllib.load(handle)
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        configured = data.get("workflow")
+        if isinstance(configured, Mapping):
+            workflow.update(configured)
+    return workflow
+
+
+_PROJECT_WORKFLOW = _load_project_workflow()
+
+
+def _workflow_string(key: str, env_name: str, default: str) -> str:
+    """Resolve an environment override, then project customization, then default."""
+    value = os.environ.get(env_name)
+    if value is None:
+        value = _PROJECT_WORKFLOW.get(key, default)
+    return value.strip() if isinstance(value, str) and value.strip() else default
+
+
+# Environment variables remain the highest-precedence runtime override.
 _STATE_DIR = Path(os.environ.get("BMAD_TDD_STATE_DIR", ".bmad-harness"))
 _STATE_FILE = _STATE_DIR / "tdd-state.json"
 _AUDIT_LOG = _STATE_DIR / "tdd-audit.log"
@@ -110,11 +143,28 @@ _SPRINT_STATUS = Path(
 # The gate activates only for an in-progress *story*, never an in-progress epic.
 _STORY_IN_PROGRESS_RE = re.compile(r"^\d+-\d+-\S.*:\s*in-progress\b")
 
-# Production and test source prefixes. Generic defaults assume a conventional
-# layout (``src/``, ``tests/``); a project overrides via BMAD_TDD_PROD_PREFIX /
-# BMAD_TDD_TEST_PREFIX to match its own tree.
-_PROD_PREFIX = os.environ.get("BMAD_TDD_PROD_PREFIX", "src/")
-_TEST_PREFIX = os.environ.get("BMAD_TDD_TEST_PREFIX", "tests/")
+# Production and test source prefixes. A project may configure these under the
+# coordinator's workflow table or override them at runtime via environment.
+_PROD_PREFIX = _workflow_string("prod_prefix", "BMAD_TDD_PROD_PREFIX", "src/")
+_TEST_PREFIX = _workflow_string("test_prefix", "BMAD_TDD_TEST_PREFIX", "tests/")
+
+
+def _validate_gate_scope() -> None:
+    """Reject un-auditable N/A gates before a loop can mutate its state."""
+    errors: list[str] = []
+    for gate in ("cleaner", "coverage", "mutation"):
+        applicable_key = f"{gate}_applicable"
+        reason_key = f"{gate}_na_reason"
+        applicable = _PROJECT_WORKFLOW.get(applicable_key, True)
+        reason = _PROJECT_WORKFLOW.get(reason_key, "")
+        if not isinstance(applicable, bool):
+            errors.append(f"{applicable_key} must be a TOML boolean")
+        elif not applicable and (not isinstance(reason, str) or not reason.strip()):
+            errors.append(f"{reason_key} is required when {applicable_key}=false")
+
+    if errors:
+        _deny("🚫 Configuración de gates inválida: " + "; ".join(errors) + "\n")
+
 
 # Phases of one Red→Green→Clean→Refactor cycle.
 READY, RED_SEEN, CODING, GREEN_SEEN, CLEAN, REFACTOR, RED_VIOLATION = (
@@ -126,6 +176,21 @@ READY, RED_SEEN, CODING, GREEN_SEEN, CLEAN, REFACTOR, RED_VIOLATION = (
     "REFACTOR",
     "RED_VIOLATION",
 )
+
+# TDD phase Tasks are routed by exact agent name. The phase labels in the
+# completion marker are deliberately separate from the state-machine labels.
+_TASK_AGENT_PHASE = {
+    "tdd-red-ornith": READY,
+    "tdd-green-ornith": CODING,
+    "tdd-clean-ornith": CLEAN,
+    "tdd-refactor-ornith": REFACTOR,
+}
+_TASK_RESULT_EXPECTATIONS = {
+    "tdd-red-ornith": ("RED", "ROJO"),
+    "tdd-green-ornith": ("GREEN", "VERDE"),
+    "tdd-clean-ornith": ("CLEAN", "CLEAN"),
+    "tdd-refactor-ornith": ("REFACTOR", "REFACTOR"),
+}
 
 # Required skill order (index-based enforcement).
 _SKILL_ORDER = tuple(
@@ -206,6 +271,12 @@ class State:
     # Model-routing gate: Task→Skill routing.
     # phase_agent_seen records which Task agent was invoked for the current phase.
     phase_agent_seen: list[str] = field(default_factory=list)
+    # The coordinator Task whose completion is still awaiting evidence. A
+    # PostToolUse Task cannot advance the machine without this pairing.
+    pending_task: str = ""
+    # OpenCode supplies the parent session id so a matching Skill in a child
+    # session does not consume the parent's pending Task pairing.
+    pending_task_session_id: str = ""
     # RED-pending guard: True once tdd-red-ornith is invoked in READY, cleared
     # when a FAIL is observed or the cycle closes. A pytest PASS while
     # red_pending is True is a protocol violation → RED_VIOLATION.
@@ -231,6 +302,8 @@ class State:
                 "skill_seen",
                 "last_skill_at",
                 "phase_agent_seen",
+                "pending_task",
+                "pending_task_session_id",
                 "red_pending",
                 "red_test_written",
             )
@@ -1245,9 +1318,14 @@ def _validate_skill_order(state: State, skill_name: str) -> tuple[bool, str]:
     return True, ""
 
 
-def handle_pre_tool_use(tool_name: str, tool_input: dict, state: State) -> None:
+def handle_pre_tool_use(
+    tool_name: str,
+    tool_input: dict,
+    state: State,
+    hook_session_id: str = "",
+) -> None:
     if _is_loop_mode():
-        _handle_loop_mode_pre_tool_use(tool_name, tool_input, state)
+        _handle_loop_mode_pre_tool_use(tool_name, tool_input, state, hook_session_id)
         return
 
     # Legacy mode: unchanged behaviour
@@ -1316,7 +1394,12 @@ def _is_gate_reset_command(command: str) -> bool:
     return gate_idx == len(argv) - 2
 
 
-def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: State) -> None:
+def _handle_loop_mode_pre_tool_use(
+    tool_name: str,
+    tool_input: dict,
+    state: State,
+    hook_session_id: str = "",
+) -> None:
     """Loop-mode PreToolUse handler: observes skills, blocks bash writes, enforces cycle."""
     # Recovery hatch: the gate's own reset CLI is always allowed (even in
     # RED_VIOLATION) so a false or genuine violation can be recovered
@@ -1353,7 +1436,7 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
             _deny(reason)
 
         # Process the skill
-        _process_loop_skill(skill_name, state)
+        _process_loop_skill(skill_name, state, hook_session_id)
         state.save()
         sys.exit(0)
 
@@ -1365,14 +1448,6 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
         prompt_text = str(tool_input.get("prompt", "") or "")
         if not subagent_type:
             sys.exit(0)  # no subagent_type → inert
-
-        # Known TDD phase agents and their required phases
-        _TASK_AGENT_PHASE = {
-            "tdd-red-ornith": READY,
-            "tdd-green-ornith": CODING,
-            "tdd-clean-ornith": CLEAN,
-            "tdd-refactor-ornith": REFACTOR,
-        }
 
         if subagent_type not in _TASK_AGENT_PHASE:
             # Unknown non-TDD Task: audit only, no state mutation
@@ -1390,9 +1465,16 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
             and "bmad-tdd-coordinator" in state.skill_seen
             and _verify_preexisting_marker(prompt_text)
         ):
+            if state.pending_task and state.pending_task != subagent_type:
+                _deny(
+                    f"🚫 Ya existe un Task TDD pendiente: {state.pending_task}. "
+                    "Espera su evidencia de finalización antes de iniciar otra fase."
+                )
             # Record green task, transition READY→CODING, save+audit
             if "tdd-green-ornith" not in state.phase_agent_seen:
                 state.phase_agent_seen.append("tdd-green-ornith")
+            state.pending_task = subagent_type
+            state.pending_task_session_id = hook_session_id
             state.phase = CODING
             state.save()
             _audit("TDD_GREEN_VERIFIED: phase READY→CODING (marker valid, prompt evidence present)")
@@ -1405,9 +1487,17 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
                 "Cada Task agent solo es válido en su fase correspondiente."
             )
 
+        if state.pending_task and state.pending_task != subagent_type:
+            _deny(
+                f"🚫 Ya existe un Task TDD pendiente: {state.pending_task}. "
+                "Espera su evidencia de finalización antes de iniciar otra fase."
+            )
+
         # Record the Task agent in phase_agent_seen (only Task handler mutates this)
         if subagent_type not in state.phase_agent_seen:
             state.phase_agent_seen.append(subagent_type)
+        state.pending_task = subagent_type
+        state.pending_task_session_id = hook_session_id
         if subagent_type == "tdd-red-ornith":
             state.red_pending = True
         state.save()
@@ -1524,7 +1614,7 @@ def _handle_loop_mode_pre_tool_use(tool_name: str, tool_input: dict, state: Stat
     sys.exit(0)
 
 
-def _process_loop_skill(skill_name: str, state: State) -> None:
+def _process_loop_skill(skill_name: str, state: State, hook_session_id: str = "") -> None:
     """Process a recognized skill invocation.
 
     Skills register in skill_seen. Phase transitions follow the canonical flow:
@@ -1536,6 +1626,23 @@ def _process_loop_skill(skill_name: str, state: State) -> None:
         Only the REFACTOR: bitácora entry closes the cycle.
     """
     now = datetime.now(UTC).isoformat()
+
+    # Keep pending_task until the matching Task completes when the Skill runs in
+    # a different OpenCode child session. Legacy hook callers without session
+    # ids retain the original same-session behavior.
+    task_for_skill = {
+        "tdd-red": "tdd-red-ornith",
+        "tdd-green": "tdd-green-ornith",
+        "tdd-clean": "tdd-clean-ornith",
+        "tdd-refactor": "tdd-refactor-ornith",
+    }.get(skill_name)
+    if task_for_skill == state.pending_task and not (
+        hook_session_id
+        and state.pending_task_session_id
+        and hook_session_id != state.pending_task_session_id
+    ):
+        state.pending_task = ""
+        state.pending_task_session_id = ""
 
     if skill_name == "bmad-tdd-coordinator":
         if "bmad-tdd-coordinator" not in state.skill_seen:
@@ -1570,15 +1677,90 @@ def _process_loop_skill(skill_name: str, state: State) -> None:
 
 # ── PostToolUse: advance the machine ──────────────────────────────────────────
 
-_PYTEST_RE = re.compile(r"\bpytest\b")
 _FAIL_RE = re.compile(r"\b(\d+ failed|\d+ error|errors?\b|FAILED|ERROR)\b")
 _PASS_RE = re.compile(r"\b\d+ passed\b")
+_VERIFY_CMD = _workflow_string("test_cmd", "BMAD_TDD_VERIFY_CMD", "")
+_SHELL_CONTROL_RE = re.compile(r"[;&|<>`$()]|\r|\n")
+_PYTHON_LAUNCHER_RE = re.compile(r"^(?:python|pypy)(?:\d+(?:\.\d+)*)?$")
 
 
-def _bash_outcome(command: str, output: str) -> str | None:
-    """Return 'red', 'green', or None for a Bash command that ran pytest (not mutmut)."""
-    if not _PYTEST_RE.search(command) or "mutmut" in command:
+def _command_tokens(command: str) -> list[str] | None:
+    """Split a command only when it contains no shell composition syntax."""
+    if not command or _SHELL_CONTROL_RE.search(command):
         return None
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    return tokens or None
+
+
+def _starts_with_command(command: str, configured: str) -> bool:
+    """Match the configured verifier as one exact argv, never as a prefix."""
+    if not configured:
+        return False
+    actual = _command_tokens(command)
+    expected = _command_tokens(configured)
+    if actual is None or expected is None:
+        return False
+    return actual == expected
+
+
+def _is_standalone_pytest_command(command: str) -> bool:
+    """Recognize legacy pytest invocations without matching arbitrary output text."""
+    tokens = _command_tokens(command)
+    if tokens is None:
+        return False
+
+    executable_index: int | None = None
+    first = Path(tokens[0]).name
+    if first in {"pytest", "py.test"}:
+        executable_index = 0
+    elif len(tokens) >= 3 and (
+        (
+            _PYTHON_LAUNCHER_RE.fullmatch(Path(tokens[0]).name) is not None
+            and tokens[1:3] == ["-m", "pytest"]
+        )
+        or (Path(tokens[0]).name == "uv" and tokens[1:3] == ["run", "pytest"])
+    ):
+        executable_index = 2
+
+    if executable_index is None:
+        return False
+    return not any(
+        option in {"-h", "--help", "--version"} for option in tokens[executable_index + 1 :]
+    )
+
+
+def _is_verification_command(command: str) -> bool:
+    if _VERIFY_CMD:
+        return _starts_with_command(command, _VERIFY_CMD)
+    return _is_standalone_pytest_command(command)
+
+
+def _response_exit(tool_response: object) -> tuple[bool, int | None]:
+    """Return whether OpenCode supplied shell exit metadata and its value."""
+    if not isinstance(tool_response, Mapping):
+        return False, None
+    metadata = tool_response.get("metadata")
+    if not isinstance(metadata, Mapping) or "exit" not in metadata:
+        return False, None
+    value = metadata.get("exit")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return True, value
+    return True, None
+
+
+def _bash_outcome(command: str, tool_response: object) -> str | None:
+    """Return RED/GREEN for a recognized test command, preferring its exit code."""
+    if not _is_verification_command(command) or "mutmut" in command:
+        return None
+    has_exit, exit_code = _response_exit(tool_response)
+    if has_exit:
+        if exit_code is None:
+            return None
+        return "green" if exit_code == 0 else "red"
+    output = _stringify(tool_response)
     if _FAIL_RE.search(output):
         return "red"
     if _PASS_RE.search(output):
@@ -1587,12 +1769,16 @@ def _bash_outcome(command: str, output: str) -> str | None:
 
 
 def handle_post_tool_use(
-    tool_name: str, tool_input: dict, tool_response: object, state: State
+    tool_name: str,
+    tool_input: dict,
+    tool_response: object,
+    state: State,
+    hook_session_id: str = "",
 ) -> None:
     changed = False
     if tool_name == "Bash":
         command = str(tool_input.get("command", ""))
-        outcome = _bash_outcome(command, _stringify(tool_response))
+        outcome = _bash_outcome(command, tool_response)
         if outcome == "red" and state.phase == READY:
             state.phase = RED_SEEN
             state.red_pending = False
@@ -1613,7 +1799,7 @@ def handle_post_tool_use(
             # Protocol violation: a development RED passed instead of failing.
             state.phase = RED_VIOLATION
             changed = True
-            _audit("RED_VIOLATION: pytest PASS during RED phase in READY (RED test was written)")
+            _audit("RED_VIOLATION: test command passed during RED in READY (RED test was written)")
     elif tool_name in ("Edit", "Write", "MultiEdit"):
         paths = _target_paths(tool_input)
         if _is_loop_mode():
@@ -1625,7 +1811,7 @@ def handle_post_tool_use(
         else:
             changed = _handle_legacy_post_tool_use(paths, tool_input, state)
     elif tool_name == "Task" and _is_loop_mode():
-        changed = _handle_task_post_tool_use(tool_input, state, tool_response)
+        changed = _handle_task_post_tool_use(tool_input, tool_response, state, hook_session_id)
     if changed:
         state.save()
     sys.exit(0)
@@ -1668,8 +1854,11 @@ def _handle_loop_post_tool_use(paths: list[str], tool_input: dict, state: State)
     return changed
 
 
+_TASK_RESULT_PREFIX = "BMAD_TDD_PHASE_RESULT:"
+
+
 def _tool_response_has_verde(resp: object) -> bool:
-    """Check if a Task tool_response contains a VERDE bitácora token (positive GREEN success)."""
+    """Check if a Task tool_response contains a VERDE bitacora token."""
     text = _stringify(resp)
     if not text:
         return False
@@ -1679,62 +1868,111 @@ def _tool_response_has_verde(resp: object) -> bool:
             return True
     except Exception:
         pass
-    # Fallback: raw substring (covers truncated or non-standard tool output)
+    for line in text.splitlines():
+        marker = line.strip()
+        if not marker.startswith(_TASK_RESULT_PREFIX):
+            continue
+        try:
+            evidence = json.loads(marker[len(_TASK_RESULT_PREFIX) :].strip())
+        except (TypeError, ValueError):
+            continue
+        if isinstance(evidence, Mapping) and evidence.get("bitacora") == "VERDE":
+            return True
     return "VERDE:" in text or "**VERDE" in text
 
 
+def _task_phase_evidence(tool_response: object, subagent_type: str) -> bool:
+    """Validate the coordinator-visible completion marker for a phase Task."""
+    if isinstance(tool_response, Mapping):
+        metadata = tool_response.get("metadata")
+        if isinstance(metadata, Mapping) and "exit" in metadata:
+            task_exit = metadata.get("exit")
+            if not isinstance(task_exit, int) or isinstance(task_exit, bool) or task_exit != 0:
+                return False
+        output = tool_response.get("output")
+    elif isinstance(tool_response, str):
+        output = tool_response
+    else:
+        return False
+
+    if not isinstance(output, str):
+        return False
+    marker_lines = [
+        stripped[len(_TASK_RESULT_PREFIX) :].strip()
+        for line in output.splitlines()
+        if (stripped := line.strip()).startswith(_TASK_RESULT_PREFIX)
+    ]
+    if len(marker_lines) != 1:
+        return False
+    try:
+        evidence = json.loads(marker_lines[0])
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(evidence, Mapping):
+        return False
+
+    expected_phase, expected_bitacora = _TASK_RESULT_EXPECTATIONS[subagent_type]
+    test_exit = evidence.get("test_exit")
+    return (
+        evidence.get("agent") == subagent_type
+        and evidence.get("phase") == expected_phase
+        and evidence.get("status") == "PASS"
+        and evidence.get("bitacora") == expected_bitacora
+        and isinstance(test_exit, int)
+        and not isinstance(test_exit, bool)
+        and ((test_exit != 0) if subagent_type == "tdd-red-ornith" else test_exit == 0)
+    )
+
+
 def _handle_task_post_tool_use(
-    tool_input: dict, state: State, tool_response: object | None = None
+    tool_input: dict,
+    tool_response: object,
+    state: State,
+    hook_session_id: str = "",
 ) -> bool:
-    """Loop-mode PostToolUse for Task completion: advance gate when TDD phase subagents finish.
+    """Bridge isolated phase Tasks only after validated completion evidence.
 
-    Session isolation: a Task runs in a subagent session whose tool calls may or
-    may not be observed by the project's opencode plugin (the plugin registry is a
-    process-global in current opencode, so it often fires for subagent sessions
-    too — but that is not guaranteed across CLI/version). This handler makes the
-    state-machine advance deterministic REGARDLESS: whether or not the subagent's
-    bitácora tokens reached the Python gate, when the Task completes in the
-    coordinator's session the PostToolUse fires here and advances the gate to the
-    state the subagent should have reached. The transition is idempotent (a token
-    already applied inside the subagent session is simply not double-advanced).
-
-    DW-111 fix: GREEN Task must not advance to CLEAN without positive VERDE evidence.
-    The Task bridge previously did CODING→GREEN_SEEN→CLEAN unconditionally, forcing a
-    ``reset`` hatch even when GREEN STOPped (no VERDE). Now it only advances
-    GREEN_SEEN→CLEAN when the Task output contains VERDE.
-
-    Architecture note: the subagent session may load the project hooks
-    (edit/write/bash covered) but NOT the JS plugin that maps ``skill``/``task``
-    to the Python gate. Without it the ``skill_seen`` array never gets populated
-    in the subagent's session, and ``_handle_loop_post_tool_use`` requires
-    ``skill_seen`` to validate transitions. The PostToolUse for Task bypasses
-    this gap entirely.
+    The coordinator owns this bridge because child sessions may not expose the
+    same gate state consistently. The bridge is deliberately fail-closed: a
+    successful Task call without the exact phase result marker is not evidence
+    that the phase completed.
     """
     subagent_type = (tool_input.get("subagent_type", "") or "").strip().lower()
-    _TASK_AGENT_PHASE = {
-        "tdd-red-ornith": READY,
-        "tdd-green-ornith": CODING,
-        "tdd-clean-ornith": CLEAN,
-        "tdd-refactor-ornith": REFACTOR,
-    }
     if subagent_type not in _TASK_AGENT_PHASE:
         return False  # non-TDD task → no transition
 
-    # Ensure phase_agent_seen records this agent (paranoid: the PreToolUse
-    # Task handler should have done this, but subagent isolation means the
-    # PreToolUse might use a different state-file scope).
-    if subagent_type not in state.phase_agent_seen:
-        state.phase_agent_seen.append(subagent_type)
+    if state.pending_task != subagent_type:
+        _deny(
+            f"🚫 Finalización de Task sin solicitud pendiente para {subagent_type}. "
+            "El gate no acepta un PostToolUse aislado como evidencia de fase."
+        )
+    if (
+        state.pending_task_session_id
+        and hook_session_id
+        and state.pending_task_session_id != hook_session_id
+    ):
+        _deny(
+            f"🚫 Finalización de Task desde una sesión no coincidente para {subagent_type}. "
+            "La evidencia debe volver a la sesión que abrió el Task."
+        )
+    if not _task_phase_evidence(tool_response, subagent_type):
+        _deny(
+            f"🚫 Evidencia de fase inválida para {subagent_type}. "
+            "La respuesta debe incluir una línea única "
+            "'BMAD_TDD_PHASE_RESULT: <JSON>' con agente, fase, status PASS, "
+            "test_exit y bitacora coherentes."
+        )
+
+    state.pending_task = ""
+    state.pending_task_session_id = ""
 
     if subagent_type == "tdd-red-ornith":
-        # RED subagent: READY → RED_SEEN → CODING
-        # The subagent wrote the test, ran pytest (FAIL), and wrote ROJO:
+        # RED subagent: READY → RED_SEEN → CODING.
+        if state.phase not in {READY, RED_SEEN, CODING}:
+            _deny(f"🚫 Finalización de Task '{subagent_type}' fuera de fase: {state.phase}.")
         if state.phase == READY:
             state.phase = RED_SEEN
         if state.phase == RED_SEEN:
-            # The subagent wrote ROJO: — but the hook didn't fire in its session,
-            # so we advance here. Even if the subagent's own hooks DID fire,
-            # this is idempotent (phase already CODING → no-op due to if/elif).
             state.phase = CODING
         state.red_pending = False
         state.red_test_written = False
@@ -1743,8 +1981,10 @@ def _handle_task_post_tool_use(
         _audit(f"TASK_POST: tdd-red-ornith completed → phase={state.phase}")
         return True
 
-    elif subagent_type == "tdd-green-ornith":
-        # GREEN subagent: CODING → GREEN_SEEN → CLEAN (DW-111: second step requires VERDE)
+    if subagent_type == "tdd-green-ornith":
+        # GREEN subagent: CODING → GREEN_SEEN → CLEAN; VERDE is required.
+        if state.phase not in {CODING, GREEN_SEEN, CLEAN}:
+            _deny(f"🚫 Finalización de Task '{subagent_type}' fuera de fase: {state.phase}.")
         if state.phase == CODING:
             state.phase = GREEN_SEEN
         if state.phase == GREEN_SEEN and _tool_response_has_verde(tool_response):
@@ -1755,12 +1995,14 @@ def _handle_task_post_tool_use(
             _audit(f"TASK_POST: tdd-green-ornith completed with VERDE → phase={state.phase}")
         else:
             _audit(
-                f"TASK_POST: tdd-green-ornith completed without VERDE → phase stays {state.phase} (DW-111 fix)"
+                f"TASK_POST: tdd-green-ornith completed without VERDE → phase stays {state.phase}"
             )
         return True
 
-    elif subagent_type == "tdd-clean-ornith":
-        # CLEAN subagent: CLEAN → REFACTOR
+    if subagent_type == "tdd-clean-ornith":
+        # CLEAN subagent: CLEAN → REFACTOR.
+        if state.phase not in {CLEAN, REFACTOR}:
+            _deny(f"🚫 Finalización de Task '{subagent_type}' fuera de fase: {state.phase}.")
         if state.phase == CLEAN:
             state.phase = REFACTOR
         if "tdd-clean" not in state.skill_seen:
@@ -1768,20 +2010,18 @@ def _handle_task_post_tool_use(
         _audit(f"TASK_POST: tdd-clean-ornith completed → phase={state.phase}")
         return True
 
-    elif subagent_type == "tdd-refactor-ornith":
-        # REFACTOR subagent: REFACTOR → READY (cycle closed)
-        if state.phase == REFACTOR:
-            state.phase = READY
-            state.cycle += 1
-            state.red_pending = False
-        if "tdd-refactor" not in state.skill_seen:
-            state.skill_seen.append("tdd-refactor")
-        _audit(
-            f"TASK_POST: tdd-refactor-ornith completed → phase={state.phase}, cycle={state.cycle}"
-        )
-        return True
-
-    return False
+    # REFACTOR subagent: REFACTOR → READY (cycle closed).
+    if state.phase not in {REFACTOR, READY}:
+        _deny(f"🚫 Finalización de Task '{subagent_type}' fuera de fase: {state.phase}.")
+    if state.phase == REFACTOR:
+        state.phase = READY
+        state.cycle += 1
+        state.red_pending = False
+        state.red_test_written = False
+    if "tdd-refactor" not in state.skill_seen:
+        state.skill_seen.append("tdd-refactor")
+    _audit(f"TASK_POST: tdd-refactor-ornith completed → phase={state.phase}, cycle={state.cycle}")
+    return True
 
 
 def _handle_legacy_post_tool_use(paths: list[str], tool_input: dict, state: State) -> bool:
@@ -1886,8 +2126,8 @@ def _stringify(resp: object) -> str:
 
 # Protected literal paths that, when combined with write indicators, trigger denial.
 _PROTECTED_LITERALS = [
-    "src/",
-    "tests/",
+    _PROD_PREFIX,
+    _TEST_PREFIX,
     "_bmad-output/implementation-artifacts/",
     ".bmad-harness/tdd-state",
     ".bmad-harness/tdd-audit",
@@ -2094,6 +2334,9 @@ def main() -> int:
         tool_input = payload.get("tool_input", {}) or {}
         story_key = _current_story_key()
 
+        if loop_active:
+            _validate_gate_scope()
+
         # Validate story key in loop mode (strict regex, no sanitize collision)
         if loop_active and story_key and not _STORY_KEY_RE.match(story_key):
             _deny(
@@ -2179,10 +2422,17 @@ def main() -> int:
                         )
                 return 0
 
+            hook_session_id = str(payload.get("session_id", "") or "")
             if event == "PreToolUse":
-                handle_pre_tool_use(tool_name, tool_input, state)
+                handle_pre_tool_use(tool_name, tool_input, state, hook_session_id)
             elif event == "PostToolUse":
-                handle_post_tool_use(tool_name, tool_input, payload.get("tool_response"), state)
+                handle_post_tool_use(
+                    tool_name,
+                    tool_input,
+                    payload.get("tool_response"),
+                    state,
+                    hook_session_id,
+                )
         return 0
 
     except SystemExit:

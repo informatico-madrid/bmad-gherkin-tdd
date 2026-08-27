@@ -21,6 +21,14 @@ test_cmd = "uv run pytest"
 mutation_cmd = "make mutation-check"
 msi_minimum = 85
 coverage_required = 100
+prod_prefix = "src/"
+test_prefix = "tests/"
+cleaner_applicable = true
+coverage_applicable = true
+mutation_applicable = true
+cleaner_na_reason = ""
+coverage_na_reason = ""
+mutation_na_reason = ""
 
 # C4 advisory — deterministic RED-test assertion-shape analyzer run inside the
 # dev session between RED and GREEN. Advisory-only calibration: it never

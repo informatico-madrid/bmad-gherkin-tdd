@@ -353,9 +353,8 @@ def test_c4_advisory_terms_present(label: str, path: Path) -> None:
     content = path.read_text(encoding="utf-8")
 
     missing = [term for term in C4_ADVISORY_REQUIRED_TERMS if term not in content]
-    assert not missing, (
-        f"C4 source '{label}' ({path}) is missing advisory terms:\n"
-        + "\n".join(f"  - {item}" for item in missing)
+    assert not missing, f"C4 source '{label}' ({path}) is missing advisory terms:\n" + "\n".join(
+        f"  - {item}" for item in missing
     )
 
 
@@ -404,7 +403,6 @@ def test_c4_red_handoff_requires_exact_nodeids(label: str, path: Path) -> None:
     lower = path.read_text(encoding="utf-8").lower()
 
     missing = [term for term in ("nodeids", "failing pytest") if term not in lower]
-    assert not missing, (
-        f"RED handoff source '{label}' ({path}) is missing terms:\n"
-        + "\n".join(f"  - {item}" for item in missing)
+    assert not missing, f"RED handoff source '{label}' ({path}) is missing terms:\n" + "\n".join(
+        f"  - {item}" for item in missing
     )

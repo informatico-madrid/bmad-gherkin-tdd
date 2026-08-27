@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Central coordinator gate-scope flags let polyglot projects keep the complete
+  RED→GREEN→CLEAN→REFACTOR protocol while recording cleaner, coverage, or mutation
+  as explicit N/A gates with auditable reasons when the stack lacks those tools.
 - C4 deterministic RED-test advisor (`red_test_advisor.py`): a pure-stdlib AST
   analyzer that classifies RED-test assertion shapes (exact equality over a
   call-derived value, broad truthiness, count-only mocks, ...) and records
@@ -45,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt). README documents the agent, its skill, usage and configuration.
 
 ### Fixed
+- The mechanical gate now observes a project-configured verification command and
+  production/test prefixes using exact, non-composed command matching; the OpenCode
+  bridge forwards the Bash exit code, so non-pytest runners such as `npm run verify`
+  drive RED/GREEN reliably without accepting chained or unrelated commands.
+- Gate now bridges subagent session isolation only when a matching `Task` has a
+  successful, phase-specific `BMAD_TDD_PHASE_RESULT` response, so cycles routed
+  through `task()` subagents (which do not inherit the plugin) no longer stall or
+  advance from an unverified Task name.
 - Gate now bridges subagent session isolation: a `Task` PostToolUse for a TDD
   phase agent advances the phase machine and records `skill_seen`, so cycles
   routed through `task()` subagents (which do not inherit the plugin) no longer
@@ -125,7 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - bmad-loop dev profile no longer bypasses `bmad-dev-auto` by invoking the coordinator
   directly.
 
-[Unreleased]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.3...HEAD
 [0.1.2]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/informatico-madrid/bmad-gherkin-tdd/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/informatico-madrid/bmad-gherkin-tdd/releases/tag/v0.1.0

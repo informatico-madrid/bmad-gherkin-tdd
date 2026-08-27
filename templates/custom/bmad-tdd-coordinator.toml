@@ -10,7 +10,7 @@ activation_steps_prepend = [
   "INTAKE · VERIFICACIÓN-EN-CONSUMO (gate duro, ANTES de PLAN): si la story consume una capacidad de otra story ya `done`, NO confíes en el status — ejecuta la verificación que la capacidad declare en su spec. Si la capacidad consumida no responde, la dependencia NO es real -> HALT y reporta.",
 ]
 activation_steps_append = [
-  "RUTINA DE COORDINACIÓN TDD: Para CADA @s en development classification, invoca EXACTAMENTE esta secuencia sincrónica (NUNCA skill directa, NUNCA inline): (1) invoke task: tdd-red-ornith con payload {story_file, @s, scenario_text, prior_evidence} → pytest FAIL → ROJO bitácora → CODING. (2) invoke task: tdd-green-ornith con mismo payload → pytest PASS → VERDE bitácora → CLEAN. (3) invoke task: tdd-clean-ornith → cleaner-gate + coverage → CLEAN bitácora → REFACTOR. (3b) VALIDAR CLEAN: aplicar checks C1-C10 del CLEAN Gate (ver SKILL.md). Si FAIL → reintentar CLEAN (max 1 vez) o deferred-work. (4) invoke task: tdd-refactor-ornith → refactor estructural preservando comportamiento + pytest PASS → REFACTOR bitácora cierra ciclo. Full mutation: UNA vez en RELEASE tras el último @s, SOLO el coordinador — NUNCA delegues {workflow.mutation_cmd} ni `uv run mutmut run` sin mutant ID a un subagente. verification_preexisting: skip task red, invocar directamente task green-ornith → task clean-ornith → task refactor-ornith si aplica. HALT si algún task falla.",
+  "RUTINA DE COORDINACIÓN TDD: Para CADA @s en development classification, invoca EXACTAMENTE esta secuencia sincrónica (NUNCA skill directa, NUNCA inline): (1) invoke task: tdd-red-ornith con payload {story_file, @s, scenario_text, prior_evidence} → {workflow.test_cmd} FAIL → ROJO bitácora → CODING. (2) invoke task: tdd-green-ornith con mismo payload → {workflow.test_cmd} PASS → VERDE bitácora → CLEAN. (3) invoke task: tdd-clean-ornith → cleaner/coverage aplicables o N/A explícito + {workflow.test_cmd} PASS → CLEAN bitácora → REFACTOR. (3b) VALIDAR CLEAN: aplicar checks C1-C10 del CLEAN Gate (ver SKILL.md). Si FAIL → reintentar CLEAN (max 1 vez) o deferred-work. (4) invoke task: tdd-refactor-ornith → refactor estructural preservando comportamiento + {workflow.test_cmd} PASS → REFACTOR bitácora cierra ciclo. Full mutation: UNA vez en RELEASE tras el último @s, SOLO el coordinador cuando mutation_applicable=true — NUNCA delegues {workflow.mutation_cmd} ni `uv run mutmut run` sin mutant ID a un subagente. DESPUÉS de cada task, exige una respuesta exitosa con una única línea BMAD_TDD_PHASE_RESULT válida para el agente, fase, test_exit y token de bitácora; si falta o contradice, HALT. verification_preexisting: skip task red, invocar directamente task green-ornith → task clean-ornith → task refactor-ornith si aplica, exigiendo la misma evidencia. HALT si algún task falla.",
   "RE-ANCLAJE: ANTES de cada transición (INTAKE→CLASSIFY, dispatch de cada task red/green/clean/refactor, y RELEASE) relee {contracts_dir}/<story-key>.feature (el @s bajo trabajo) + el spec de la story ({implementation_artifacts}/<story-key>.md). La compactación destruye la intención; solo el archivo persiste.",
   "C4 ADVISOR (advisory-only, sin hooks, sin autoridad): para CADA @s development, tras RED y ANTES del review, UN comando sin operadores de shell: `python _bmad/gherkin-tdd/scripts/red_test_advisor.py analyze --project-root . --evidence-root <run-dir>/evidence/red-test-advisor --scenario-id @s<k> --target <nodeid-exacto del RED handoff> --output <run-dir>/evidence/red-test-advisor/advisor-<story>-s<k>.json` (repite --target por cada nodeid; en loop el run-dir es $BMAD_LOOP_RUN_DIR). El MUTANT-HUNTING REVIEW corre SIEMPRE regardless of the advisor verdict; tras él, persistir el texto bounded del review + label y: `python _bmad/gherkin-tdd/scripts/red_test_advisor.py compare --advisor <advisor.json> --llm-verdict <strong|weak|unsupported> --llm-review <review.txt> --evidence-root <mismo> --output <comparison.json>`. El advisor verdict never authorizes GREEN — decide SOLO el review LLM; fallo/infra → registrar y continuar (retry máx 1); NUNCA `certified`; registrar paths/hashes en bitácora.",
 ]
@@ -19,3 +19,17 @@ persistent_facts = [
   "TDD SUBAGENT TYPES: task(subagent_type='tdd-red-ornith'|'tdd-green-ornith'|'tdd-refactor-ornith'|'tdd-clean-ornith') — NEVER 'general' for TDD phases (general lacks task() tool).",
 ]
 on_complete = ""
+
+# Defaults preserve the Python workflow. Polyglot projects override these values
+# and mirror test/phase commands in each phase skill's project customization.
+# Gate applicability is centralized here; every false flag requires its *_na_reason.
+test_cmd = "uv run pytest"
+mutation_cmd = "make mutation-check"
+prod_prefix = "src/"
+test_prefix = "tests/"
+cleaner_applicable = true
+coverage_applicable = true
+mutation_applicable = true
+cleaner_na_reason = ""
+coverage_na_reason = ""
+mutation_na_reason = ""

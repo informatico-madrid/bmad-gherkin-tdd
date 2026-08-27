@@ -1,9 +1,15 @@
 ---
 name: tdd-clean
-description: TDD CLEAN Phase structural quality gate before mutation. Runs cleaner-gate (KISS/DRY/YAGNI/LoD/CoI/scan_sites) + coverage, refactors violations while preserving behavior. Use between GREEN and REFACTOR.
+description: TDD CLEAN Phase structural quality gate before mutation. Runs the project's applicable cleaner and coverage gates, refactors violations while preserving behavior, and records N/A gates explicitly. Use between GREEN and REFACTOR.
 ---
 
 # TDD CLEAN Phase
+
+Gate applicability is owned centrally by the coordinator customization in
+`{project-root}/_bmad/custom/bmad-tdd-coordinator.toml`. This phase customization
+supplies commands only; do not add contradictory phase-local `*_applicable` flags.
+When a gate is disabled, the central `*_na_reason` is required and must be copied
+into the bitacora's N/A entry.
 
 ## Activation Sequence
 
@@ -13,8 +19,11 @@ description: TDD CLEAN Phase structural quality gate before mutation. Runs clean
 
 ## Owns
 
-- Ejecucion del cleaner-gate del proyecto sobre archivos del diff de la story
-- Ejecucion de `pytest --cov` para verificar 100% cobertura en archivos del diff
+- Ejecucion del cleaner-gate del proyecto cuando el scope central declara
+  `cleaner_applicable = true`
+- Ejecucion del comando de cobertura cuando el scope central declara
+  `coverage_applicable = true`
+- Registro explícito `N/A` con `*_na_reason` cuando uno de esos gates no aplica al stack
 - Interpretacion de violaciones de los 7 checks (KISS, DRY, YAGNI, LoD, CoI, coverage, scan_mutation_sites)
 - Refactorizacion estructural (simplificar, split, eliminar dead code) preservando comportamiento
 - Verificacion de que el test sigue verde despues de cada refactor
@@ -30,7 +39,7 @@ description: TDD CLEAN Phase structural quality gate before mutation. Runs clean
 6. Romper cadenas de atributos reportadas por LoD (>3 niveles)
 7. Reducir herencia profunda reportada por CoI (>2 niveles): composicion sobre herencia
 8. Split de archivos con >100 mutation sites (scan_mutation_sites): partir en modulos cohesivos
-9. Asegurar 100% coverage en diff: si falta cobertura, NO inventar tests — reportar gap
+9. Si coverage aplica, asegurar 100% en diff; si falta, NO inventar tests — reportar gap
 
 ## Workflow
 
@@ -40,7 +49,12 @@ description: TDD CLEAN Phase structural quality gate before mutation. Runs clean
 
 1. Identificar archivos del diff: `git diff --name-only HEAD~1` o desde el contexto de la story
 
-2. Ejecutar cleaner gate:
+2. Resolver aplicabilidad del cleaner gate:
+    - Leer `cleaner_applicable` y `cleaner_na_reason` del `[workflow]` de la
+      personalización `bmad-tdd-coordinator`, no de una personalización de esta fase.
+    - Si `cleaner_applicable = false` → NO ejecutar `cleaner_cmd`; registrar
+      `cleaner-gate: N/A — skipped (<cleaner_na_reason>)` y pasar al paso 5.
+    - Si `cleaner_applicable = true` → ejecutar:
    ```bash
    {workflow.cleaner_cmd} <diff_files>
    ```
@@ -61,19 +75,28 @@ description: TDD CLEAN Phase structural quality gate before mutation. Runs clean
    - NO ocultar con pragma
    - Reportar al coordinador como "cleaner-stuck"
 
-5. Coverage check:
+5. Resolver aplicabilidad de coverage:
+    - Leer `coverage_applicable` y `coverage_na_reason` del `[workflow]` de la
+      personalización `bmad-tdd-coordinator`.
+    - Si `coverage_applicable = false` → NO fabricar una métrica; registrar
+      `coverage: N/A — skipped (<coverage_na_reason>)`.
+    - Si `coverage_applicable = true` → ejecutar exactamente:
    ```bash
-   {workflow.test_cmd} --cov=<diff_files> --cov-report=term-missing <test_files>
+   {workflow.coverage_cmd}
    ```
    - Coverage debe ser 100% en archivos del diff
    - Si <100% → reportar gap (el tdd-red ya debio cubrirlo)
    - NO añadir tests nuevos aqui (eso es RED)
 
+   En ambos casos ejecutar `{workflow.test_cmd}` y confirmar que el comportamiento
+   contratado sigue verde.
+
 6. Actualizar bitacora TDD (CLEAN status):
    ```
    ## @s<k> CLEAN — <fecha>
-   cleaner-gate: PASS (KISS ✓, DRY ✓, YAGNI ✓, LoD ✓, CoI ✓, scan ✓)
-   coverage: 100%
+    cleaner-gate: PASS (...) | N/A — skipped (<cleaner_na_reason>)
+    coverage: 100% | N/A — skipped (<coverage_na_reason>)
+   tests: PASS ({workflow.test_cmd})
    cambios: [lista de archivos y refactors aplicados]
    ```
 
@@ -89,10 +112,15 @@ description: TDD CLEAN Phase structural quality gate before mutation. Runs clean
 
 ## Verification
 
-- **Corre:** `{workflow.cleaner_cmd} <diff_files>` → debe dar PASS en los checks
-- **Corre:** `{workflow.test_cmd} --cov=<diff_files>` → debe dar 100% coverage + todos los tests PASS
-- **Corre:** `{workflow.cleaner_cmd} <diff_files>` → re-chequeo post-refactor
-- **Delega a:** `tdd-refactor` (refactor estructural), el coordinador en RELEASE (mutación completa)
+- Si el scope central declara `cleaner_applicable = true`, corre `{workflow.cleaner_cmd}
+  <diff_files>` y exige PASS; si es `false`, registra N/A con la razón central.
+- Si el scope central declara `coverage_applicable = true`, corre `{workflow.coverage_cmd}`
+  y exige 100%; si es `false`, registra N/A con la razón central.
+- **Siempre corre:** `{workflow.test_cmd}` → todos los tests PASS.
+- Re-chequea `{workflow.cleaner_cmd} <diff_files>` post-refactor únicamente cuando
+  `cleaner_applicable = true`.
+- **Delega a:** `tdd-refactor` (refactor estructural), el coordinador en RELEASE
+  (mutación completa). No ejecuta ni delega mutación desde CLEAN.
 
 ## Constraints
 
@@ -104,8 +132,10 @@ description: TDD CLEAN Phase structural quality gate before mutation. Runs clean
 
 ## Output
 
-- cleaner-gate: PASS en todos los checks aplicables al diff
-- coverage: 100% en archivos del diff
+- cleaner-gate: PASS o N/A explícito según configuración
+- coverage: 100% o N/A explícito según configuración
 - tests: todos los tests del diff PASS
 - bitacora: CLEAN status con detalle de cambios y metricas
+- Antes de devolver el control, emitir exactamente una línea de evidencia para el
+  coordinador: `BMAD_TDD_PHASE_RESULT: {"agent":"tdd-clean-ornith","phase":"CLEAN","status":"PASS","test_exit":0,"bitacora":"CLEAN"}`.
 - STOP -- return to coordinator with PASS/FAIL + bitacora

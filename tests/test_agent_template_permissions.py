@@ -38,6 +38,11 @@ def test_agent_template_exists() -> None:
     assert AGENT_TEMPLATE.is_file(), f"missing agent template: {AGENT_TEMPLATE}"
 
 
+def test_template_allows_nested_coordinator_dispatch() -> None:
+    """The implementation agent must be able to launch phase subagents."""
+    assert _load_template()["subagent_depth"] == 2
+
+
 def test_every_phase_agent_denies_question() -> None:
     """Each TDD phase subagent must carry permission.question == "deny"."""
     agents = _load_template()["agent"]

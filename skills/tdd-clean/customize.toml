@@ -11,3 +11,4 @@ on_complete = ""
 # Default commands. Projects override in _bmad/custom/tdd-clean.toml.
 test_cmd = "uv run pytest"
 cleaner_cmd = "uv run python _bmad/gherkin-tdd/scripts/cleaner_gate.py"
+coverage_cmd = "uv run pytest --cov --cov-report=term-missing"

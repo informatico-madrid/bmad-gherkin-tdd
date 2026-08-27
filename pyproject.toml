@@ -47,6 +47,8 @@ include = ["bmad_gherkin_tdd*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Benchmark fixtures intentionally contain structural violations for evaluation.
+extend-exclude = ["agent_bench"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

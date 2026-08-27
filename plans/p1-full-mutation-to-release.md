@@ -6,7 +6,7 @@
 >
 > Decisiones humanas confirmadas (2026-08-22):
 > 1. Confirmado el alcance P1 tal como está abajo (incluye `permission.bash` en el template y la
->    reforma de todas las líneas contradictorias). 
+>    reforma de todas las líneas contradictorias).
 > 2. `msi_minimum` se mantiene en **85 configurable** (no se sube a 100).
 > 3. Se mantiene intacto el 4-fase `RED→GREEN→CLEAN→REFACTOR` (sigue existiendo
 >    `tdd-clean-ornith`); solo se retira la mutación de REFACTOR.
