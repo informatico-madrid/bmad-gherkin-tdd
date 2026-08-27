@@ -1625,7 +1625,7 @@ def handle_post_tool_use(
         else:
             changed = _handle_legacy_post_tool_use(paths, tool_input, state)
     elif tool_name == "Task" and _is_loop_mode():
-        changed = _handle_task_post_tool_use(tool_input, state)
+        changed = _handle_task_post_tool_use(tool_input, state, tool_response)
     if changed:
         state.save()
     sys.exit(0)
@@ -1668,7 +1668,24 @@ def _handle_loop_post_tool_use(paths: list[str], tool_input: dict, state: State)
     return changed
 
 
-def _handle_task_post_tool_use(tool_input: dict, state: State) -> bool:
+def _tool_response_has_verde(resp: object) -> bool:
+    """Check if a Task tool_response contains a VERDE bitácora token (positive GREEN success)."""
+    text = _stringify(resp)
+    if not text:
+        return False
+    try:
+        tokens = _parse_bitacora_tokens(text)
+        if "VERDE" in tokens:
+            return True
+    except Exception:
+        pass
+    # Fallback: raw substring (covers truncated or non-standard tool output)
+    return "VERDE:" in text or "**VERDE" in text
+
+
+def _handle_task_post_tool_use(
+    tool_input: dict, state: State, tool_response: object | None = None
+) -> bool:
     """Loop-mode PostToolUse for Task completion: advance gate when TDD phase subagents finish.
 
     Session isolation: a Task runs in a subagent session whose tool calls may or
@@ -1680,6 +1697,11 @@ def _handle_task_post_tool_use(tool_input: dict, state: State) -> bool:
     coordinator's session the PostToolUse fires here and advances the gate to the
     state the subagent should have reached. The transition is idempotent (a token
     already applied inside the subagent session is simply not double-advanced).
+
+    DW-111 fix: GREEN Task must not advance to CLEAN without positive VERDE evidence.
+    The Task bridge previously did CODING→GREEN_SEEN→CLEAN unconditionally, forcing a
+    ``reset`` hatch even when GREEN STOPped (no VERDE). Now it only advances
+    GREEN_SEEN→CLEAN when the Task output contains VERDE.
 
     Architecture note: the subagent session may load the project hooks
     (edit/write/bash covered) but NOT the JS plugin that maps ``skill``/``task``
@@ -1722,14 +1744,19 @@ def _handle_task_post_tool_use(tool_input: dict, state: State) -> bool:
         return True
 
     elif subagent_type == "tdd-green-ornith":
-        # GREEN subagent: CODING → GREEN_SEEN → CLEAN
+        # GREEN subagent: CODING → GREEN_SEEN → CLEAN (DW-111: second step requires VERDE)
         if state.phase == CODING:
             state.phase = GREEN_SEEN
-        if state.phase == GREEN_SEEN:
+        if state.phase == GREEN_SEEN and _tool_response_has_verde(tool_response):
             state.phase = CLEAN
         if "tdd-green" not in state.skill_seen:
             state.skill_seen.append("tdd-green")
-        _audit(f"TASK_POST: tdd-green-ornith completed → phase={state.phase}")
+        if _tool_response_has_verde(tool_response):
+            _audit(f"TASK_POST: tdd-green-ornith completed with VERDE → phase={state.phase}")
+        else:
+            _audit(
+                f"TASK_POST: tdd-green-ornith completed without VERDE → phase stays {state.phase} (DW-111 fix)"
+            )
         return True
 
     elif subagent_type == "tdd-clean-ornith":

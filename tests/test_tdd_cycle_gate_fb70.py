@@ -129,13 +129,16 @@ def _edit_test_file() -> dict:
     }
 
 
-def _task_post(agent: str) -> dict:
+def _task_post(agent: str, *, tool_response: object | None = None) -> dict:
     """PostToolUse Task completion — the subagent-session bridge (A0 port)."""
-    return {
+    payload: dict = {
         "hook_event_name": "PostToolUse",
         "tool_name": "Task",
         "tool_input": {"subagent_type": agent},
     }
+    if tool_response is not None:
+        payload["tool_response"] = tool_response
+    return payload
 
 
 def _bash(command: str) -> dict:
@@ -2334,7 +2337,9 @@ def test_task_post_full_cycle_closes_to_ready(tmp_path: Path) -> None:
     _run_gate(workspace, _task("tdd-red-ornith"))
     _run_gate(workspace, _task_post("tdd-red-ornith"))  # → CODING
     _run_gate(workspace, _task("tdd-green-ornith"))
-    _run_gate(workspace, _task_post("tdd-green-ornith"))  # → CLEAN
+    _run_gate(
+        workspace, _task_post("tdd-green-ornith", tool_response="VERDE: test passes")
+    )  # → CLEAN (DW-111: requires VERDE)
     _run_gate(workspace, _task("tdd-clean-ornith"))
     _run_gate(workspace, _task_post("tdd-clean-ornith"))  # → REFACTOR
     _run_gate(workspace, _task("tdd-refactor-ornith"))
@@ -2347,6 +2352,74 @@ def test_task_post_full_cycle_closes_to_ready(tmp_path: Path) -> None:
     assert state["cycle"] == 2
     for skill in ("tdd-red", "tdd-green", "tdd-clean", "tdd-refactor"):
         assert skill in state["skill_seen"]
+
+
+def test_task_post_green_without_verde_stays_at_green_seen(tmp_path: Path) -> None:
+    """DW-111 fix: GREEN Task without VERDE must NOT advance to CLEAN.
+
+    Previously the bridge did CODING→GREEN_SEEN→CLEAN unconditionally, forcing
+    a reset hatch even when GREEN STOPped (no VERDE). Now it stays at GREEN_SEEN
+    so the coordinator can re-dispatch GREEN without reset.
+    """
+    workspace = _setup_workspace(tmp_path)
+    _run_gate(workspace, _skill("bmad-tdd-coordinator"))
+    _run_gate(workspace, _task("tdd-red-ornith"))
+    _run_gate(workspace, _task_post("tdd-red-ornith"))  # READY→CODING
+    _run_gate(workspace, _task("tdd-green-ornith"))  # CODING, pre GREEN
+
+    # GREEN Task completes WITHOUT VERDE (STOP case): should stay at GREEN_SEEN
+    rc, _, _ = _run_gate(workspace, _task_post("tdd-green-ornith"))
+    assert rc == 0
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["phase"] == "GREEN_SEEN", (
+        "DW-111: GREEN without VERDE must stay GREEN_SEEN, not CLEAN"
+    )
+    assert "tdd-green" in state["skill_seen"]
+
+    # GREEN without VERDE but with explicit STOP text also stays GREEN_SEEN
+    rc, _, _ = _run_gate(
+        workspace, _task_post("tdd-green-ornith", tool_response="STOP: quality gate failed")
+    )
+    assert rc == 0
+    state = json.loads((workspace / ".bmad-harness" / "tdd-state-1-6-repair-test.json").read_text())
+    assert state["phase"] == "GREEN_SEEN"
+
+
+def test_task_post_green_with_verde_advances_to_clean(tmp_path: Path) -> None:
+    """GREEN Task with VERDE in tool_response must advance to CLEAN (happy path)."""
+    # Fresh workspace, CODING→GREEN_SEEN→CLEAN with VERDE string
+    workspace2 = _setup_workspace(tmp_path / "v2")
+    _run_gate(workspace2, _skill("bmad-tdd-coordinator"), story_key="1-6-repair-test-v2")
+    _run_gate(workspace2, _task("tdd-red-ornith"), story_key="1-6-repair-test-v2")
+    _run_gate(workspace2, _task_post("tdd-red-ornith"), story_key="1-6-repair-test-v2")
+    _run_gate(workspace2, _task("tdd-green-ornith"), story_key="1-6-repair-test-v2")
+    rc, _, _ = _run_gate(
+        workspace2,
+        _task_post("tdd-green-ornith", tool_response="VERDE: test passes"),
+        story_key="1-6-repair-test-v2",
+    )
+    assert rc == 0
+    state = json.loads(
+        (workspace2 / ".bmad-harness" / "tdd-state-1-6-repair-test-v2.json").read_text()
+    )
+    assert state["phase"] == "CLEAN"
+
+    # Also test dict-shaped tool_response with VERDE
+    workspace3 = _setup_workspace(tmp_path / "v3")
+    _run_gate(workspace3, _skill("bmad-tdd-coordinator"), story_key="1-6-repair-test-v3")
+    _run_gate(workspace3, _task("tdd-red-ornith"), story_key="1-6-repair-test-v3")
+    _run_gate(workspace3, _task_post("tdd-red-ornith"), story_key="1-6-repair-test-v3")
+    _run_gate(workspace3, _task("tdd-green-ornith"), story_key="1-6-repair-test-v3")
+    rc, _, _ = _run_gate(
+        workspace3,
+        _task_post("tdd-green-ornith", tool_response={"output": "VERDE: via dict"}),
+        story_key="1-6-repair-test-v3",
+    )
+    assert rc == 0
+    state = json.loads(
+        (workspace3 / ".bmad-harness" / "tdd-state-1-6-repair-test-v3.json").read_text()
+    )
+    assert state["phase"] == "CLEAN"
 
 
 def test_task_post_non_tdd_task_ignored(tmp_path: Path) -> None:
