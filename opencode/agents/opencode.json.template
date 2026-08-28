@@ -1,8 +1,9 @@
 # BMAD Gherkin TDD — OpenCode agent definitions (template).
 #
 # Copy the block below into your project's `.opencode/opencode.json` under the
-# top-level `"agent"` key: the `bmad-loop-coordinator` primary agent (optional but
-# recommended for autonomous bmad-loop runs) PLUS the four TDD phase subagents.
+# top-level `"agent"` key: the implementation agent permission below, the
+# `bmad-loop-coordinator` primary agent (optional but recommended for autonomous
+# bmad-loop runs), PLUS the four TDD phase subagents.
 # Replace the MODEL placeholders with the model ids configured in your project's
 # providers (e.g. "cefprovider/bunker-local", "nan/deepseek-v4-flash",
 # "deepseek/deepseek-v4-flash", ...).
@@ -26,12 +27,19 @@
 #
 # bmad-loop launches bmad-dev-auto, which launches the coordinator, which then
 # launches the four phase agents. Keep two levels available for that nested
-# dispatch; the default depth of one blocks the coordinator's Task calls.
+# dispatch; the default depth of one blocks the coordinator's Task calls. The
+# default bmad-dev-auto implementation subagent is `general`, so it also needs
+# an explicit `task: allow` permission to launch the coordinator's phase agents.
 
 {
   "$schema": "https://opencode.ai/config.json",
   "subagent_depth": 2,
   "agent": {
+    "general": {
+      "permission": {
+        "task": "allow"
+      }
+    },
     "bmad-loop-coordinator": {
       "description": "BMAD Loop Coordinator (primary): selects stories, launches and monitors bmad-loop runs, intervenes on failures, reviews results. Orchestrates; never writes code. Loads the bmad-loop-coordinator skill on bootstrap and gates interaction on the project's human-present flag.",
       "mode": "primary",

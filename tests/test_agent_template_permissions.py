@@ -40,7 +40,9 @@ def test_agent_template_exists() -> None:
 
 def test_template_allows_nested_coordinator_dispatch() -> None:
     """The implementation agent must be able to launch phase subagents."""
-    assert _load_template()["subagent_depth"] == 2
+    template = _load_template()
+    assert template["subagent_depth"] == 2
+    assert template["agent"]["general"]["permission"]["task"] == "allow"
 
 
 def test_every_phase_agent_denies_question() -> None:

@@ -117,9 +117,12 @@ coding CLI; it activates only while a story is `in-progress` (or in `BMAD_LOOP_M
 
 ### 4. Loop orchestration agent (optional but recommended)
 
-To run autonomous loops end-to-end, add the `bmad-loop-coordinator` primary agent from
-`opencode/agents/opencode.json.template` to your project's `.opencode/opencode.json`
-(it ships alongside the four phase subagents). The agent loads the methodology skill
+To run autonomous loops end-to-end, add the implementation-agent permission, the
+`bmad-loop-coordinator` primary agent, and the four phase subagents from
+`opencode/agents/opencode.json.template` to your project's `.opencode/opencode.json`.
+The default `bmad-dev-auto` implementation agent is `general`; it must retain the
+template's explicit `task: "allow"` so it can launch the coordinator and its phase
+subagents. The coordinator agent loads the methodology skill
 `bmad-loop-coordinator` on bootstrap and reads the project's `.bmad-loop/human-present`
 flag: when the flag is `no`, it never uses the interactive `question` tool and resolves
 everything from the planning corpus; when `yes`, it may ask when strictly necessary.
