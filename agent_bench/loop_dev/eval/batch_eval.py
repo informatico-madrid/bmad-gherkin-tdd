@@ -172,6 +172,11 @@ def main():
     g.add_argument("--run-dir", type=Path)
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
+
+    if not (FIXTURE_DIR / "src" / "quota_sync.py").is_file():
+        print(f"[skip] loop_dev fixture is not materialized: {FIXTURE_DIR}")
+        return
+
     if args.run_dir:
         run_dir = args.run_dir
     else:

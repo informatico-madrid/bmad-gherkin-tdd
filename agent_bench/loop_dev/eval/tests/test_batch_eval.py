@@ -6,6 +6,8 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
+
 from agent_bench.common import tool_names
 from agent_bench.loop_dev.eval.batch_eval import (
     _find_spec,
@@ -15,6 +17,10 @@ from agent_bench.loop_dev.eval.batch_eval import (
 )
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "dev-hard"
+pytestmark = pytest.mark.skipif(
+    not (FIXTURE / "src" / "quota_sync.py").is_file(),
+    reason="optional loop_dev fixture is not materialized",
+)
 
 
 def test_fixture_hashes_point_at_fixture_not_empty():

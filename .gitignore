@@ -20,3 +20,7 @@ _bmad-output/
 
 # GBrain-generated (resolver health check; routing table for workspace skills — not source)
 skills/RESOLVER.md
+
+# Optional agent benchmark fixtures are maintained outside this repository.
+agent_bench/loop_dev/fixtures/dev-hard/
+agent_bench/loop_review/fixtures/review-hard/

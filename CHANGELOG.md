@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt). README documents the agent, its skill, usage and configuration.
 
 ### Fixed
+- OpenCode HTTP profile overlays now retain environment-fault patterns, including
+  the provider quota error form emitted as `The usage limit has been reached`.
 - The mechanical gate now observes a project-configured verification command and
   production/test prefixes using exact, non-composed command matching; the OpenCode
   bridge forwards the Bash exit code, so non-pytest runners such as `npm run verify`

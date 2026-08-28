@@ -3,6 +3,12 @@
 Aislado del módulo de producción. No se instala, no se toca el gate, no cambia el workflow TDD.
 Evalúa agentes de las 4 fases TDD contra varios modelos para elegir el más barato-efectivo por fase.
 
+## Fixtures opcionales
+
+Los fixtures hostiles de `loop_dev` y `loop_review` no forman parte de este repositorio. Se mantienen en el `.gitignore` porque se materializan desde el repositorio de benchmarks inicial cuando se necesita ejecutar esas evaluaciones.
+
+Si el fixture no está presente, los launchers y evaluadores muestran `skip` y terminan correctamente. Esto no afecta al módulo de producción ni a la CI principal.
+
 ## Ciclo TDD cubierto
 
 | Fase | Agente | Benchmark | Qué evalúa |

@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from agent_bench.loop_review.eval.batch_eval import check_surface, fixture_hashes
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "review-hard"
+pytestmark = pytest.mark.skipif(
+    not (FIXTURE / "src" / "quota_calc.py").is_file(),
+    reason="optional loop_review fixture is not materialized",
+)
 
 
 def test_src_edit_fails_against_fixture(tmp_path: Path):

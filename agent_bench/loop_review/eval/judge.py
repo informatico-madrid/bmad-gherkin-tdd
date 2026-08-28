@@ -152,6 +152,11 @@ def main():
     parser.add_argument("--timeout", type=int, default=240)
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
+
+    if not (FIXTURE_DIR / "src" / "quota_calc.py").is_file():
+        print(f"[skip] loop_review fixture is not materialized: {FIXTURE_DIR}")
+        return
+
     if args.run_dir:
         run_dir = args.run_dir
     else:

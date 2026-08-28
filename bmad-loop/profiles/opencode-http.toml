@@ -12,5 +12,12 @@ usage_parser = "none"
 skill_tree = ".agents/skills"
 first_run_note = "run opencode auth login once on this machine; headless servers reuse stored credentials"
 
+# Project overlays replace the packaged profile, so retain the provider and
+# transport fault patterns needed to classify OpenCode server failures.
+env_fault_patterns = [
+  'error[.]error="AI_APICallError: [^"]{0,400}?(?i:usage limit(?: has been)? reached|429|too many requests|rate[ _-]?limit|quota|overloaded)',
+  'error[.]error="AI_APICallError: [^"]{0,400}?(?i:cannot connect to api|socket connection was closed|connection ?(error|refused|reset|timed ?out)|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN)',
+]
+
 [hooks]
 dialect = "none"

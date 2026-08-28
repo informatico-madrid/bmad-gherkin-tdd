@@ -59,6 +59,10 @@ def main():
     parser.add_argument("--parallel", "-p", type=int, default=0)
     args = parser.parse_args()
 
+    if not (FIXTURE_DIR / "src" / "quota_calc.py").is_file():
+        print(f"[skip] loop_review fixture is not materialized: {FIXTURE_DIR}")
+        return
+
     models = resolve_models(args.models)
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     run_dir = RUNS_BASE / run_id
